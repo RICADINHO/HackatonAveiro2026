@@ -7,43 +7,56 @@
 
   outputs = { self, nixpkgs }:
     let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs {
-        inherit system;
-        config = {
-          allowUnfree = true;
-          cudaSupport = true;
-        };
-      };
+      systems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems f;
     in {
-      devShells.${system}.default = pkgs.mkShell {
-        name = "edgerock-env";
-        buildInputs = with pkgs; [
-          uv
-          git
-          python312
-          cudaPackages.cudatoolkit
-          stdenv.cc.cc.lib
-          zlib
-          pkgs.autoAddDriverRunpath
-        ];
-        shellHook = ''
-          export UV_PROJECT_ENVIRONMENT=".venv"
-          export UV_PYTHON_DOWNLOADS=never
-          export CUDA_PATH="${pkgs.cudaPackages.cudatoolkit}"
-          export LD_LIBRARY_PATH="/run/opengl-driver/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH"
-          export LIBRARY_PATH="/run/opengl-driver/lib:/run/opengl-driver/lib/stubs:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.cudaPackages.cudatoolkit}/lib/stubs:$LIBRARY_PATH"
-          export TRITON_LIBCUDA_PATH="/run/opengl-driver/lib"
-          export TMPDIR="/tmp/edgerock"
-          mkdir -p "$TMPDIR"
+      devShells = forAllSystems (system:
+        let
+          # CUDA in nixpkgs is x86_64-only (ignoring Jetson overlays).
+          hasCuda = system == "x86_64-linux";
 
-          echo "ready (CUDA driver visible via /run/opengl-driver/lib)."
-          echo ""
-          echo "First-time setup:"
-          echo "  uv venv .venv --python ${pkgs.python312}/bin/python3.12"
-          echo "  source .venv/bin/activate"
-          echo "  uv pip install -r requirements.txt"
-        '';
-      };
+          pkgs = import nixpkgs {
+            inherit system;
+            config = {
+              allowUnfree = true;
+              cudaSupport = hasCuda;
+            };
+          };
+
+          cudaPackages = if hasCuda then pkgs.cudaPackages else null;
+        in {
+          default = pkgs.mkShell {
+            name = "edgerock-env";
+            buildInputs = with pkgs; [
+              uv
+              git
+              python312
+              stdenv.cc.cc.lib
+              zlib
+            ] ++ (if hasCuda then [
+              cudaPackages.cudatoolkit
+              pkgs.autoAddDriverRunpath
+            ] else []);
+            shellHook = ''
+              export UV_PROJECT_ENVIRONMENT=".venv"
+              export UV_PYTHON_DOWNLOADS=never
+              ${if hasCuda then ''
+                export CUDA_PATH="${cudaPackages.cudatoolkit}"
+              '' else ""}
+              export LD_LIBRARY_PATH="/run/opengl-driver/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH"
+              export LIBRARY_PATH="/run/opengl-driver/lib:/run/opengl-driver/lib/stubs:${if hasCuda then "${cudaPackages.cudatoolkit}/lib:${cudaPackages.cudatoolkit}/lib/stubs" else ""}:$LIBRARY_PATH"
+              export TRITON_LIBCUDA_PATH="/run/opengl-driver/lib"
+              export TMPDIR="/tmp/edgerock"
+              mkdir -p "$TMPDIR"
+
+              echo "ready (${system}${if hasCuda then ", CUDA via /run/opengl-driver/lib" else ", no CUDA"})."
+              echo ""
+              echo "First-time setup:"
+              echo "  uv venv .venv --python ${pkgs.python312}/bin/python3.12"
+              echo "  source .venv/bin/activate"
+              echo "  uv pip install -r requirements.txt"
+            '';
+          };
+        });
     };
 }
