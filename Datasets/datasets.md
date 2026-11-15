@@ -19,3 +19,4 @@ Street signs:
 - https://universe.roboflow.com/zrana/traffic-signs-vhclc
 - https://universe.roboflow.com/fsli/traffic-signs-l1dd1
 - https://universe.roboflow.com/kaushik-gfstb/traffic-signs-pq69p
+- https://streetview-waste.di.ubi.pt/
