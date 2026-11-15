@@ -1,5 +1,5 @@
 {
-  description = "EdgeRock-4B with CUDA (unfree) + uv";
+  description = "Basic python environment in nix";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
