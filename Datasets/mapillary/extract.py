@@ -7,6 +7,7 @@ Outputs, under Datasets/mapillary/data/:
   images.jsonl          metadata of every image that contributed to a feature
   detections.jsonl      per-(feature, image) bbox/polygon in image space
   images/<id>.jpg       1024px thumbnails (only with --images)
+  raw_<bbox>.json       raw map-feature response cache (keyed by bbox)
 """
 import argparse
 import base64
@@ -67,7 +68,7 @@ def category(value):
 
 
 def get(session, path, **params):
-    """GET with retry on transient errors (5xx, rate limit)."""
+    """GET with retry on transient errors (5xx, 429, is_transient)."""
     for attempt in range(6):
         r = session.get(f"{API}/{path}", params=params, timeout=60)
         if r.status_code == 200:
@@ -78,10 +79,24 @@ def get(session, path, **params):
             transient = r.json().get("error", {}).get("is_transient", False)
         except ValueError:
             transient = False
-        if r.status_code < 500 and not transient:
+        if r.status_code < 500 and r.status_code != 429 and not transient:
             break
         time.sleep(2 ** attempt)
     raise RuntimeError(f"{r.status_code} {r.url.split('access_token')[0]}: {r.text[:300]}")
+
+
+def safe(fn, tries=4):
+    """Retry fn(x) with backoff; give up (log 'skip:') only after all tries."""
+    def w(x):
+        for t in range(tries):
+            try:
+                return fn(x)
+            except Exception as e:
+                if t == tries - 1:
+                    print(f"\nskip: {repr(x)[:80]} {e!r}", file=sys.stderr)
+                    return None
+                time.sleep(2 ** t)
+    return w
 
 
 def cells(west, south, east, north):
@@ -122,7 +137,7 @@ def fetch_images(session, ids):
         return resp["data"] if "data" in resp else list(resp.values())
 
     with ThreadPoolExecutor(8) as ex:
-        return [img for chunk in ex.map(one, batches) for img in chunk]
+        return [img for chunk in ex.map(safe(one), batches) if chunk for img in chunk]
 
 
 def decode_polygon(b64):
@@ -155,7 +170,8 @@ def fetch_detections(session, features, workers):
         return rows
 
     with ThreadPoolExecutor(workers) as ex:
-        return [r for rows in ex.map(one, features) for r in rows]
+        rows_list = ex.map(safe(one), features)
+        return [r for rows in rows_list if rows for r in rows]
 
 
 def download(img):
@@ -165,7 +181,9 @@ def download(img):
         return
     r = requests.get(url, timeout=60)
     r.raise_for_status()
-    path.write_bytes(r.content)
+    tmp = path.with_suffix(".part")
+    tmp.write_bytes(r.content)
+    tmp.replace(path)
 
 
 def main():
@@ -187,12 +205,37 @@ def main():
     fields = "id,object_value" if args.probe else FEATURE_FIELDS
     grid = list(cells(*bbox))
 
-    feats = {}
-    with ThreadPoolExecutor(args.workers) as ex:
-        for i, chunk in enumerate(ex.map(lambda b: fetch(session, b, values, fields), grid), 1):
-            feats.update({f["id"]: f for f in chunk})
-            print(f"\rcells {i}/{len(grid)}  features {len(feats)}", end="", file=sys.stderr)
-    print(file=sys.stderr)
+    OUT.mkdir(parents=True, exist_ok=True)
+    cache = OUT / ("raw_" + "_".join(f"{v:.4f}" for v in bbox) + ".json")
+    if cache.exists() and not args.probe:
+        feats = json.loads(cache.read_text())
+        print(f"loaded {len(feats)} from cache", file=sys.stderr)
+    else:
+        fetch_cell = safe(lambda b: fetch(session, b, values, fields))
+        feats, todo = {}, grid
+        for attempt in range(2):          # 2nd pass retries failed cells
+            failed = []
+            with ThreadPoolExecutor(args.workers) as ex:
+                for i, (b, chunk) in enumerate(zip(todo, ex.map(fetch_cell, todo)), 1):
+                    if chunk is None:
+                        failed.append(b)
+                        continue
+                    feats.update({f["id"]: f for f in chunk})
+                    print(f"\rpass {attempt} cells {i}/{len(todo)}  features {len(feats)}",
+                          end="", file=sys.stderr)
+            todo = failed
+            if not todo:
+                break
+        print(file=sys.stderr)
+        if todo:
+            print(f"WARNING: {len(todo)} cells failed twice, cache has holes: {todo}", file=sys.stderr)
+        if not args.probe:
+            cache.write_text(json.dumps(feats))
+
+    if not args.probe:
+        n = len(feats)
+        feats = {k: f for k, f in feats.items() if f.get("geometry")}
+        print(f"dropped {n - len(feats)} without geometry", file=sys.stderr)
 
     if args.probe:
         counts = Counter(f["object_value"] for f in feats.values())
@@ -201,7 +244,6 @@ def main():
         print("\n* = relevant to challenge")
         return
 
-    OUT.mkdir(parents=True, exist_ok=True)
     geojson = {"type": "FeatureCollection", "features": [{
         "type": "Feature",
         "geometry": f["geometry"],
@@ -209,11 +251,11 @@ def main():
             "id": f["id"],
             "category": category(f["object_value"]),
             "object_value": f["object_value"],
-            "object_type": f["object_type"],
+            "object_type": f.get("object_type"),
             "aligned_direction": f.get("aligned_direction"),
             "first_seen_at": f.get("first_seen_at"),
             "last_seen_at": f.get("last_seen_at"),
-            "image_ids": [i["id"] for i in f.get("images", {}).get("data", [])],
+            "image_ids": [i["id"] for i in (f.get("images") or {}).get("data", [])],
         },
     } for f in feats.values()]}
     (OUT / "map_features.geojson").write_text(json.dumps(geojson))
@@ -235,9 +277,16 @@ def main():
 
     if args.images:
         (OUT / "images").mkdir(exist_ok=True)
-        with ThreadPoolExecutor(args.workers) as ex:
-            list(ex.map(download, images))
-        print("images downloaded")
+        have = lambda i: (OUT / "images" / f"{i['id']}.jpg").exists()
+        todo = [i for i in images if i.get("thumb_1024_url")]
+        for attempt in range(3):
+            with ThreadPoolExecutor(args.workers) as ex:
+                list(ex.map(safe(download), todo))   # download skips existing files
+            todo = [i for i in todo if not have(i)]
+            if not todo:
+                break
+            time.sleep(30)
+        print(f"images missing after retries: {len(todo)}")
 
 
 if __name__ == "__main__":
