@@ -19,3 +19,5 @@
 - `npm install`
 - `npm run dev` to test locally
 - `npm run deploy` to deploy to github pages
+
+Site available at: https://ricadinho.github.io/HackatonAveiro2026/
