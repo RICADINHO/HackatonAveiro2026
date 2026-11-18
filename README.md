@@ -3,7 +3,7 @@
 ## Equipa Dot.
 
 - Alano Baptista
-- João FIlipe
+- João Filipe
 - Vicente Chã
 
 # Python Env setup
