@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://Yeshey.github.io/learnWithT/sitemap.xml
+Sitemap: https://ricadinho.github.io/HackatonAveiro2026/sitemap.xml
