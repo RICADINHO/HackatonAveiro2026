@@ -7,18 +7,15 @@ export default defineConfig({
   plugins: [
     react(),
     sitemap({
-      // The hostname MUST include your repository path for GitHub Pages
-      hostname: 'https://Yeshey.github.io/learnWithT',
-      // Provide the list of all your pages here
-      dynamicRoutes: [
-        '/',
-        // TODO: replace these with this project's real routes
-        '/about',
-        '/faq',
-      ],
+      // hostname MUST match the deployed Pages URL — no trailing slash
+      hostname: 'https://ricadinho.github.io/HackatonAveiro2026',
+      // Only list routes that actually exist in the app.
+      // This project has no router (just App.tsx), so only "/" is real.
+      dynamicRoutes: ['/'],
     }),
   ],
-  base: '/learnWithT/',
+  // MUST be the repo name with slashes on both sides, case-sensitive.
+  base: '/HackatonAveiro2026/',
   build: {
     outDir: 'dist',
   },
