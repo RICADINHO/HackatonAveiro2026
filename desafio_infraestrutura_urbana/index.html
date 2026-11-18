@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="pt">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Mobiliário Urbano — Aveiro</title>
+
+  <!-- Favicons -->
+  <link href="assets/img/barco-icon.jpg" rel="icon">
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com" rel="preconnect">
+  <link href="https://fonts.gstatic.com" rel="preconnect" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Questrial&display=swap"
+    rel="stylesheet"
+  >
+
+  <!-- Vendor CSS -->
+  <link href="assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link href="assets/vendor/bootstrap-icons/bootstrap-icons.css" rel="stylesheet">
+  <link href="assets/vendor/aos/aos.css" rel="stylesheet">
+  <link href="assets/vendor/glightbox/css/glightbox.min.css" rel="stylesheet">
+  <link href="assets/vendor/swiper/swiper-bundle.min.css" rel="stylesheet">
+
+  <!-- Leaflet CSS -->
+  <link
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    rel="stylesheet"
+  >
+
+  <!-- Main CSS -->
+  <link href="assets/css/main.css" rel="stylesheet">
+</head>
+
+<body class="index-page">
+
+  <header id="header" class="header d-flex align-items-center sticky-top">
+    <div class="header-container container-fluid container-xl
+                d-flex align-items-center justify-content-between">
+
+      <a href="index.html" class="logo d-flex align-items-center">
+        <h1 class="sitename">Ctrl+F Aveiro: Indetificacão automática do mobiliário urbano</h1>
+      </a>
+
+      <nav id="navmenu" class="navmenu">
+        <ul>
+          <li><a href="#mapa">Mapa</a></li>
+          <li><a href="#filtros">Filtros</a></li>
+          <li><a href="#carregar">Carregar Ficheiros</a></li>
+        </ul>
+        <i class="mobile-nav-toggle d-xl-none bi bi-list"></i>
+      </nav>
+
+    </div>
+  </header>
+
+<main class="main">
+
+  <section id="mapa" class="section">
+    <div class="container">
+
+      <div class="section-title">
+        <h2>Mobiliário urbano</h2>
+        <p>Consulta os elementos identificados no mapa de Aveiro.</p>
+      </div>
+
+      <div
+        id="mapa-aveiro"
+        style="height: 70vh; min-height: 400px; width: 100%; border-radius: 16px;">
+      </div>
+
+    </div>
+  </section>
+
+  
+  <div id="filtros" class="container mb-4">
+
+    <div class="filtros-mapa">
+
+      <div
+        id="categorias-filtros"
+        class="d-flex flex-wrap justify-content-center gap-2">
+      </div>
+
+      <div
+        id="filtros-selecionados"
+        class="d-flex flex-wrap justify-content-center gap-2 mt-3"
+        aria-live="polite">
+      </div>
+
+    </div>
+
+  </div>
+
+
+
+  <section id="carregar" class="section">
+    <div class="container">
+
+      <div class="section-title">
+        <h2>Carregar ficheiros</h2>
+        <p>Seleciona imagens ou vídeos para identificacão.</p>
+      </div>
+
+      <div class="carregar-ficheiros card shadow-sm">
+        <div class="card-body p-4">
+
+          <form id="form-upload">
+            <label for="ficheiros" class="form-label">
+              Imagens ou vídeos
+            </label>
+
+            <input
+              type="file"
+              id="ficheiros"
+              name="ficheiros"
+              class="form-control"
+              accept="image/*,video/*"
+              multiple
+              required
+            >
+
+            <p class="text-muted small mt-2">
+              Podes selecionar vários ficheiros.
+            </p>
+
+            <button type="submit" class="btn btn-primary mt-2">
+              <i class="bi bi-upload me-2"></i>
+              Enviar para análise
+            </button>
+          </form>
+
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+  <footer id="footer" class="footer">
+    <div class="container text-center">
+      <p>Ctrl + F Aveiro — Mobiliário Urbano</p>
+      <div class="credits">
+        Designed by
+        <a href="https://bootstrapmade.com/">BootstrapMade</a> |
+        <a href="https://bootstrapmade.com/tools/">DevTools</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scroll Top -->
+  <a href="#" id="scroll-top"
+     class="scroll-top d-flex align-items-center justify-content-center">
+    <i class="bi bi-arrow-up-short"></i>
+  </a>
+
+  <!-- Vendor JS -->
+
+
+  <!-- Main JS -->
+  <script src="assets/js/main.js"></script>
+
+  <!-- Leaflet: carregar antes do código do mapa -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="script.js"></script>
+
+</body>
+</html>
