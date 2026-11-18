@@ -28,11 +28,17 @@
           default = pkgs.mkShell {
             name = "edgerock-env";
             buildInputs = with pkgs; [
+              # Python
               uv
               git
               python312
               stdenv.cc.cc.lib
               zlib
+
+              # Node / React / GitHub Pages tooling
+              nodejs_26
+              # firebase-tools
+              # nodePackages.npm
             ] ++ (if hasCuda then [
               cudaPackages.cudatoolkit
               pkgs.autoAddDriverRunpath
@@ -51,10 +57,16 @@
 
               echo "ready (${system}${if hasCuda then ", CUDA via /run/opengl-driver/lib" else ", no CUDA"})."
               echo ""
-              echo "First-time setup:"
+              echo "Python first-time setup:"
               echo "  uv venv .venv --python ${pkgs.python312}/bin/python3.12"
               echo "  source .venv/bin/activate"
               echo "  uv pip install -r requirements.txt"
+              echo ""
+              echo "React / GitHub Pages:"
+              echo "  npm create vite@latest dot -- --template react-ts"
+              echo "  cd dot"
+              echo "  npm install gh-pages --save-dev"
+              echo "  npm run deploy"
             '';
           };
         });
