@@ -1,5 +1,6 @@
 Datasets/mapillary/data
 /aveiro-data/
+imgs/
 
 # Created by https://www.toptal.com/developers/gitignore/api/linux,windows,macos,python,venv,visualstudiocode,direnv,node
 # Edit at https://www.toptal.com/developers/gitignore?templates=linux,windows,macos,python,venv,visualstudiocode,direnv,node
