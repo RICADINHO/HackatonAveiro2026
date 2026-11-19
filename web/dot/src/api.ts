@@ -1,7 +1,8 @@
-const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+import { config } from '../../src/config.ts'
+
+const baseUrl = config.apiBase.replace(/\/$/, '')
 
 async function request(path: string, options: RequestInit = {}, token?: string) {
-  if (!baseUrl) throw new Error('O endereço da API ainda não está configurado.')
   const headers = new Headers(options.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
   if (typeof options.body === 'string') headers.set('Content-Type', 'application/json')
@@ -27,6 +28,10 @@ export async function api<T>(path: string, options?: RequestInit, token?: string
 
 export async function previewImage(id: string, token: string) {
   return (await request(`/previews/${id}/image`, {}, token)).blob()
+}
+
+export function imageUrl(path: string) {
+  return /^https?:\/\//i.test(baseUrl) ? new URL(path, baseUrl).href : path
 }
 
 export const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error)

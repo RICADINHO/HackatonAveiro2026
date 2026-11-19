@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import math
 import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -9,10 +8,10 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 import requests
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
 from psycopg.errors import ForeignKeyViolation
@@ -21,8 +20,9 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from . import inventory
-from .imaging import MAX_IMAGE_BYTES, prepare_photo
+from .. import inventory
+from ..imaging import MAX_IMAGE_BYTES, prepare_photo
+from .config import Settings
 
 logger = logging.getLogger(__name__)
 bearer = HTTPBearer(auto_error=False)
@@ -30,31 +30,6 @@ Category = Literal['sinalizacao', 'iluminacao', 'residuos']
 Latitude = Annotated[float, Field(ge=-90, le=90, allow_inf_nan=False)]
 Longitude = Annotated[float, Field(ge=-180, le=180, allow_inf_nan=False)]
 Heading = Annotated[float, Field(ge=0, lt=360, allow_inf_nan=False)]
-
-
-@dataclass(frozen=True)
-class Settings:
-    database_url: str
-    supabase_url: str
-    supabase_publishable_key: str
-    image_dir: Path
-    public_image_base_url: str
-    cors_origins: tuple[str, ...]
-    dedup_radius: float = 50
-
-    @classmethod
-    def from_env(cls):
-        load_dotenv(Path(__file__).resolve().parents[1] / '.env')
-        radius = float(os.getenv('DEDUP_RADIUS_METERS', '50'))
-        if not math.isfinite(radius) or radius <= 0:
-            raise ValueError('DEDUP_RADIUS_METERS must be positive and finite')
-        return cls(
-            os.environ['DATABASE_URL'], os.environ['SUPABASE_URL'].rstrip('/'),
-            os.environ['SUPABASE_PUBLISHABLE_KEY'], Path(os.environ['IMAGE_DIR']),
-            os.environ['PUBLIC_IMAGE_BASE_URL'].rstrip('/'),
-            tuple(origin.strip() for origin in os.environ['CORS_ORIGINS'].split(',') if origin.strip()),
-            radius,
-        )
 
 
 @dataclass(frozen=True)
@@ -96,13 +71,17 @@ def remove_file(path: Path):
         logger.exception('Could not remove %s', path)
 
 
-def create_app(settings: Settings | None = None):
-    settings = settings or Settings.from_env()
+def create_app(settings: Settings):
     pool = ConnectionPool(settings.database_url, open=False, min_size=1, max_size=8,
                           kwargs={'row_factory': dict_row, 'autocommit': True,
                                   'options': '-c default_transaction_isolation=read\\ committed'})
-    private_dir = settings.image_dir / 'private'
-    public_dir = settings.image_dir / 'public'
+    private_dir = (settings.data_dir / 'images' / 'private').resolve()
+    public_dir = (settings.data_dir / 'images' / 'public').resolve()
+    models_dir = (settings.data_dir / 'models').resolve()
+    frontend_dir = settings.frontend_dir.resolve()
+    if private_dir.is_relative_to(public_dir) or public_dir.is_relative_to(private_dir):
+        raise ValueError('As pastas de imagens privadas e públicas têm de ser separadas.')
+    api = APIRouter()
 
     def clean_previews():
         with pool.connection() as db, db.transaction():
@@ -121,6 +100,7 @@ def create_app(settings: Settings | None = None):
     async def lifespan(_app):
         private_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         public_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+        models_dir.mkdir(parents=True, exist_ok=True)
         await run_in_threadpool(pool.open, wait=True)
         try:
             async def cleanup_loop():
@@ -179,18 +159,18 @@ def create_app(settings: Settings | None = None):
         return db.execute('SELECT id FROM aveiro.images WHERE id = %s AND uploader_id = %s',
                           (image_id, owner_id)).fetchone()
 
-    @app.get('/me')
+    @api.get('/me')
     def me(user: Annotated[Principal, Depends(authenticated)]):
         return {'id': user.id, 'public_name': user.public_name,
                 'role': 'technician' if user.technician else 'authenticated'}
 
-    @app.get('/items')
+    @api.get('/items')
     def items(category: Annotated[list[Category] | None, Query()] = None,
               class_name: Annotated[list[str] | None, Query()] = None):
         with pool.connection() as db:
             return inventory.list_items(db, category, class_name)
 
-    @app.get('/items/{item_id}')
+    @api.get('/items/{item_id}')
     def item_detail(item_id: UUID):
         with pool.connection() as db, db.transaction():
             db.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
@@ -198,19 +178,19 @@ def create_app(settings: Settings | None = None):
         if item is None:
             raise HTTPException(404, 'Elemento inexistente.')
         for image in item['images']:
-            image['url'] = f"{settings.public_image_base_url}/{image.pop('file_path')}"
+            image['url'] = f"/img/{image.pop('file_path')}"
         return item
 
-    @app.get('/images')
+    @api.get('/images')
     def images(_user: Annotated[Principal, Depends(technician)]):
         with pool.connection() as db:
             rows = db.execute(f'''SELECT {inventory.IMAGE_FIELDS} FROM aveiro.images im
                                  ORDER BY im.submitted_at DESC, im.id''').fetchall()
         for image in rows:
-            image['url'] = f"{settings.public_image_base_url}/{image.pop('file_path')}"
+            image['url'] = f"/img/{image.pop('file_path')}"
         return rows
 
-    @app.post('/previews', status_code=201)
+    @api.post('/previews', status_code=201)
     def create_preview(user: Annotated[Principal, Depends(authenticated)], image: Annotated[UploadFile, File()]):
         contents = image.file.read(MAX_IMAGE_BYTES + 1)
         if len(contents) > MAX_IMAGE_BYTES:
@@ -235,7 +215,7 @@ def create_app(settings: Settings | None = None):
             raise
         return {'id': preview_id, 'camera': camera, 'detections': detections}
 
-    @app.get('/previews/{preview_id}/image')
+    @api.get('/previews/{preview_id}/image')
     def preview_image(preview_id: UUID, user: Annotated[Principal, Depends(authenticated)]):
         with pool.connection() as db, db.transaction():
             row = db.execute('''
@@ -250,7 +230,7 @@ def create_app(settings: Settings | None = None):
                 raise HTTPException(404, 'Pré-visualização inexistente ou expirada.') from exc
         return Response(contents, media_type='image/jpeg', headers={'Cache-Control': 'private, no-store'})
 
-    @app.post('/previews/{preview_id}/publish')
+    @api.post('/previews/{preview_id}/publish')
     def publish(preview_id: UUID, manual: CameraInput, user: Annotated[Principal, Depends(authenticated)]):
         staged = private_dir / f'{preview_id}.jpg'
         published = public_dir / staged.name
@@ -280,16 +260,18 @@ def create_app(settings: Settings | None = None):
         remove_file(staged)
         return {'id': preview_id}
 
-    @app.get('/published/{image_id}', status_code=204, include_in_schema=False)
-    def published_image_exists(image_id: UUID):
-        """Caddy checks publication in PostGIS before opening the processed JPEG."""
+    def require_publication(image_id: UUID):
         with pool.connection() as db:
             row = db.execute('SELECT id FROM aveiro.images WHERE id = %s', (image_id,)).fetchone()
         if row is None:
             raise HTTPException(404, 'Imagem inexistente.')
+
+    @api.get('/published/{image_id}', status_code=204, include_in_schema=False)
+    def published_image_exists(image_id: UUID):
+        require_publication(image_id)
         return Response(status_code=204)
 
-    @app.patch('/items/{item_id}', status_code=204)
+    @api.patch('/items/{item_id}', status_code=204)
     def edit_item(item_id: UUID, update: ItemUpdate, _user: Annotated[Principal, Depends(technician)]):
         if (update.latitude is None) != (update.longitude is None):
             raise HTTPException(422, 'Indica as duas coordenadas.')
@@ -305,27 +287,27 @@ def create_app(settings: Settings | None = None):
             if row is None:
                 raise HTTPException(404, 'Elemento inexistente.')
 
-    @app.delete('/items/{item_id}', status_code=204)
+    @api.delete('/items/{item_id}', status_code=204)
     def delete_item(item_id: UUID, _user: Annotated[Principal, Depends(technician)]):
         with pool.connection() as db, db.transaction():
             inventory.lock_inventory(db)
             if db.execute('DELETE FROM aveiro.items WHERE id = %s', (item_id,)).rowcount == 0:
                 raise HTTPException(404, 'Elemento inexistente.')
 
-    @app.patch('/images/{image_id}', status_code=204)
+    @api.patch('/images/{image_id}', status_code=204)
     def edit_image(image_id: UUID, update: CameraCorrection, _user: Annotated[Principal, Depends(technician)]):
         with pool.connection() as db, db.transaction():
             if not inventory.correct_camera(db, image_id, update):
                 raise HTTPException(404, 'Imagem inexistente.')
 
-    @app.delete('/images/{image_id}', status_code=204)
+    @api.delete('/images/{image_id}', status_code=204)
     def delete_image(image_id: UUID, _user: Annotated[Principal, Depends(technician)]):
         with pool.connection() as db, db.transaction():
             if not inventory.delete_image(db, image_id):
                 raise HTTPException(404, 'Imagem inexistente.')
         remove_file(public_dir / f'{image_id}.jpg')
 
-    @app.post('/reports', status_code=201)
+    @api.post('/reports', status_code=201)
     def create_report(report: ReportCreate, user: Annotated[Principal, Depends(authenticated)]):
         report_id = uuid4()
         try:
@@ -336,7 +318,7 @@ def create_app(settings: Settings | None = None):
             raise HTTPException(404, 'Elemento associado inexistente.') from exc
         return {'id': report_id}
 
-    @app.get('/reports')
+    @api.get('/reports')
     def reports(_user: Annotated[Principal, Depends(technician)]):
         with pool.connection() as db:
             return db.execute('''
@@ -344,12 +326,55 @@ def create_app(settings: Settings | None = None):
                 LEFT JOIN aveiro.items i ON i.id = r.item_id ORDER BY r.submitted_at DESC
             ''').fetchall()
 
-    @app.patch('/reports/{report_id}/resolve', status_code=204)
+    @api.patch('/reports/{report_id}/resolve', status_code=204)
     def resolve_report(report_id: UUID, user: Annotated[Principal, Depends(technician)]):
         with pool.connection() as db, db.transaction():
             db.execute("""UPDATE aveiro.reports SET status = 'resolved', resolved_by = %s, resolved_at = now()
                           WHERE id = %s AND status = 'open'""", (user.id, report_id))
             if not db.execute('SELECT id FROM aveiro.reports WHERE id = %s', (report_id,)).fetchone():
                 raise HTTPException(404, 'Problema inexistente.')
+
+    app.include_router(api, prefix='/api')
+    app.include_router(api, include_in_schema=False)
+
+    @app.api_route('/img/{filename}', methods=['GET', 'HEAD'], include_in_schema=False)
+    def public_image(filename: str):
+        try:
+            image_id = UUID(filename.removesuffix('.jpg'))
+        except ValueError as exc:
+            raise HTTPException(404, 'Imagem inexistente.') from exc
+        if filename != f'{image_id}.jpg':
+            raise HTTPException(404, 'Imagem inexistente.')
+        require_publication(image_id)
+        photo = (public_dir / filename).resolve()
+        if photo.parent != public_dir or not photo.is_file():
+            raise HTTPException(404, 'Imagem inexistente.')
+        return FileResponse(photo, media_type='image/jpeg', headers={
+            'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff',
+        })
+
+    @app.api_route('/{path:path}', methods=['GET', 'HEAD'], include_in_schema=False)
+    def frontend(path: str):
+        namespace = path.partition('/')[0]
+        if namespace in {'api', 'img', 'items', 'images', 'published', 'previews', 'reports', 'me'} or any(
+            part.startswith('.') for part in Path(path).parts
+        ):
+            raise HTTPException(404)
+        try:
+            asset = (frontend_dir / path).resolve()
+        except (OSError, ValueError) as exc:
+            raise HTTPException(404) from exc
+        if not asset.is_relative_to(frontend_dir) or any(
+            asset.is_relative_to(data_folder) for data_folder in (private_dir, public_dir, models_dir)
+        ):
+            raise HTTPException(404)
+        if asset.is_file():
+            return FileResponse(asset)
+        if namespace == 'assets' or Path(path).suffix:
+            raise HTTPException(404)
+        index = (frontend_dir / 'index.html').resolve()
+        if index.parent != frontend_dir or not index.is_file():
+            raise HTTPException(503, 'Compila o frontend com npm run build em web/dot.')
+        return FileResponse(index, headers={'Cache-Control': 'no-cache'})
 
     return app

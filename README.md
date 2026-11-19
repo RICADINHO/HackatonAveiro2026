@@ -17,11 +17,12 @@
 - Was created with `npm create vite@latest dot -- --template react-ts`
 - `cd web/dot`
 - `npm install`
-- `npm run dev` to test locally
-- `npm run deploy` to deploy to github pages
+- `npm run build` compila o frontend para `web/dist`.
+- `npm run dev` inicia o Vite com proxy para a API local.
+- `npm run deploy` publica o frontend no GitHub Pages.
 
 Site available at: https://ricadinho.github.io/HackatonAveiro2026/
 
 ## Inventário, API e Skyloft
 
-Segue o [guia do servidor](server/README.md) para configurar o Supabase Auth, PostgreSQL/PostGIS, a API FastAPI, o Caddy e a ligação do frontend.
+Segue o [guia do servidor](server/README.md#correr-localmente) para correr a aplicação no portátil ou no Skyloft. O FastAPI serve o frontend, a API e as imagens publicadas.

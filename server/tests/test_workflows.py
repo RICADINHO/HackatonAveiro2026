@@ -15,6 +15,7 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from server.app import Settings, create_app
+from server.app.__main__ import checked_host
 from server.imaging import prepare_photo
 
 
@@ -37,6 +38,18 @@ class CameraMetadata(unittest.TestCase):
             self.assertEqual(len(detections), 3)
             with Image.open(destination) as processed:
                 self.assertFalse(processed.getexif())
+
+
+class LocalBind(unittest.TestCase):
+    def test_placeholder_requires_explicit_opt_in_for_non_loopback(self):
+        with patch.dict(os.environ, {'ALLOW_PLACEHOLDER_PUBLIC': '0'}):
+            self.assertEqual(checked_host('localhost'), '127.0.0.1')
+            self.assertEqual(checked_host('::1'), '::1')
+            for host in ('0.0.0.0', '::', '192.168.0.1'):
+                with self.assertRaises(ValueError):
+                    checked_host(host)
+        with patch.dict(os.environ, {'ALLOW_PLACEHOLDER_PUBLIC': '1'}):
+            self.assertEqual(checked_host('0.0.0.0'), '0.0.0.0')
 
 
 @unittest.skipUnless(os.getenv('AVEIRO_TEST_DATABASE_URL'), 'PostGIS test connection not configured')
@@ -85,9 +98,21 @@ class InventoryWorkflow(unittest.TestCase):
         camera = {'latitude': 40.6405, 'longitude': -8.6538, 'heading': 0}
 
         with TemporaryDirectory() as scratch:
-            settings = Settings(self.dsn, 'https://test.supabase.co', 'test-key', Path(scratch),
-                                'https://api.example.com/img', ('https://ricadinho.github.io',))
+            root = Path(scratch)
+            frontend = root / 'dist'
+            (frontend / 'assets').mkdir(parents=True)
+            (frontend / 'index.html').write_text('<html><title>Aveiro SPA</title></html>', encoding='utf-8')
+            (frontend / 'assets' / 'app.js').write_text('console.log("Aveiro")', encoding='utf-8')
+            settings = Settings(self.dsn, 'https://test.supabase.co', 'test-key', root,
+                                cors_origins=('https://ricadinho.github.io',), frontend_dir=frontend)
             with patch('server.app.requests.get', side_effect=fake_auth), TestClient(create_app(settings)) as client:
+                self.assertIn('Aveiro SPA', client.get('/').text)
+                self.assertIn('Aveiro SPA', client.get('/mapa/aveiro').text)
+                self.assertIn('console.log', client.get('/assets/app.js').text)
+                for missing in ('/api/unknown', '/img/private/test.jpg', '/assets/missing.js', '/.env'):
+                    self.assertEqual(client.get(missing).status_code, 404, missing)
+                self.assertTrue((root / 'models').is_dir())
+                self.assertEqual(client.get('/api/items').json(), [])
                 self.assertEqual(client.get('/items').json(), [])
                 cors = client.get('/items', headers={'Origin': 'https://ricadinho.github.io'})
                 self.assertEqual(cors.headers['access-control-allow-origin'], 'https://ricadinho.github.io')
@@ -106,7 +131,8 @@ class InventoryWorkflow(unittest.TestCase):
                     return staged['id']
 
                 first, second = prepare(), prepare()
-                image_path = f'/previews/{first}/image'
+                image_path = f'/api/previews/{first}/image'
+                public_photo = f'/img/{first}.jpg'
                 self.assertEqual(client.get(image_path).status_code, 401)
                 self.assertEqual(client.get(image_path, headers=auth('other')).status_code, 404)
                 self.assertEqual(client.get(image_path, headers=auth('tech')).status_code, 404)
@@ -117,13 +143,14 @@ class InventoryWorkflow(unittest.TestCase):
                     self.assertFalse(processed.getexif())
                     self.assertGreater(processed.getpixel((48, 170))[0], 0)
                 self.assertEqual(client.get(f'/published/{first}').status_code, 404)
+                self.assertEqual(client.get(public_photo).status_code, 404)
                 self.assertEqual(client.post(f'/previews/{first}/publish', json=camera,
                                              headers=auth('other')).status_code, 404)
                 self.assertEqual(client.post(f'/previews/{first}/publish', json={},
                                              headers=auth('member')).status_code, 422)
 
                 def publish(preview_id, coordinates):
-                    response = client.post(f'/previews/{preview_id}/publish', json=coordinates, headers=auth('member'))
+                    response = client.post(f'/api/previews/{preview_id}/publish', json=coordinates, headers=auth('member'))
                     self.assertEqual(response.status_code, 200, response.text)
                     self.assertEqual(response.json(), {'id': preview_id})
 
@@ -135,7 +162,11 @@ class InventoryWorkflow(unittest.TestCase):
                 publish(first, camera)
                 self.assertEqual(client.get(image_path, headers=auth('member')).status_code, 404)
                 self.assertEqual(client.get(f'/published/{first}').status_code, 204)
-                self.assertEqual((Path(scratch) / 'public' / f'{first}.jpg').read_bytes(), preview.content)
+                photo = client.get(public_photo)
+                self.assertEqual(photo.headers['content-type'], 'image/jpeg')
+                self.assertEqual(photo.content, preview.content)
+                self.assertEqual(client.head(public_photo).status_code, 200)
+                self.assertEqual((root / 'images' / 'public' / f'{first}.jpg').read_bytes(), preview.content)
 
                 self.assertEqual(len(client.get('/items').json()), 3)
                 for category in ('sinalizacao', 'iluminacao', 'residuos'):
@@ -144,6 +175,7 @@ class InventoryWorkflow(unittest.TestCase):
                 stop_path = f"/items/{stop['id']}"
                 details = client.get(stop_path).json()
                 self.assertEqual({image['id'] for image in details['images']}, {first, second})
+                self.assertIn(public_photo, {image['url'] for image in details['images']})
                 self.assertEqual(details['images'][0]['uploader_name'], 'Conta de teste')
                 self.assertNotEqual(details['images'][0]['detections'][0]['latitude'], details['images'][0]['latitude'])
                 estimated = [image['detections'][0]['latitude'] for image in details['images']]
@@ -180,4 +212,5 @@ class InventoryWorkflow(unittest.TestCase):
                 self.assertIsNone(client.get('/reports', headers=auth('tech')).json()[0]['item_id'])
                 self.assertEqual(client.delete(f'/images/{first}', headers=auth('tech')).status_code, 204)
                 self.assertEqual(client.get(f'/published/{first}').status_code, 404)
-                self.assertFalse((Path(scratch) / 'public' / f'{first}.jpg').exists())
+                self.assertEqual(client.get(public_photo).status_code, 404)
+                self.assertFalse((root / 'images' / 'public' / f'{first}.jpg').exists())

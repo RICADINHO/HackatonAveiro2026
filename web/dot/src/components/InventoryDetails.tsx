@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { api, errorMessage } from '../api.ts'
+import { api, errorMessage, imageUrl } from '../api.ts'
 import { CATEGORIAS } from '../constants.ts'
 import type { ItemDetail, PublishedImage } from '../types.ts'
 import { CameraFields } from './CameraFields.tsx'
@@ -32,7 +32,7 @@ export function ImageDetails({ image, token, onChange }: { image: PublishedImage
 
   return (
     <article className="card p-3 mb-3">
-      <DetectionImage src={image.url} detections={image.detections ?? []} />
+      <DetectionImage src={imageUrl(image.url)} detections={image.detections ?? []} />
       <p className="mt-2 mb-1">
         Câmara em {image.latitude.toFixed(6)}, {image.longitude.toFixed(6)} · {image.heading.toFixed(1)}°
       </p>

@@ -5,6 +5,7 @@ from pathlib import Path
 from PIL import ExifTags, Image, ImageFilter, ImageOps
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
+PLACEHOLDER_BLUR = True
 Image.MAX_IMAGE_PIXELS = 25_000_000
 
 

@@ -50,7 +50,7 @@ in
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         PrivateTmp = true;
-        ExecStart = "${cfg.repository}/.venv/bin/python -m uvicorn server.app:create_app --factory --host 127.0.0.1 --port 8000";
+        ExecStart = "${cfg.repository}/.venv/bin/python -m server.app --data-dir /var/lib/aveiro-urban";
         Restart = "on-failure";
       };
     };
