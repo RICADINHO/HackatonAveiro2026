@@ -1,0 +1,27 @@
+{$AVEIRO_API_DOMAIN:api.example.com} {
+	@published path_regexp photo ^/img/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jpg$
+	handle @published {
+		route {
+			forward_auth 127.0.0.1:8000 {
+				uri /published/{re.photo.1}
+			}
+			uri strip_prefix /img
+			root * {$AVEIRO_PUBLIC_IMAGE_DIR:/var/lib/aveiro-urban/images/public}
+			header Cache-Control "no-cache"
+			header X-Content-Type-Options nosniff
+			file_server
+		}
+	}
+
+	@private path /img /img/* /published /published/*
+	handle @private {
+		respond 404
+	}
+
+	handle {
+		request_body {
+			max_size 13631488
+		}
+		reverse_proxy 127.0.0.1:8000
+	}
+}

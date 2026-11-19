@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 
 interface HeaderProps {
   activeSection?: string
+  signedIn?: boolean
 }
 
-export function Header({ activeSection = 'mapa' }: HeaderProps) {
+export function Header({ activeSection = 'mapa', signedIn }: HeaderProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   useEffect(() => {
@@ -77,9 +78,11 @@ export function Header({ activeSection = 'mapa' }: HeaderProps) {
                 className={activeSection === 'carregar' ? 'active' : ''}
                 onClick={closeMobileNav}
               >
-                Carregar Ficheiros
+                Carregar imagem
               </a>
             </li>
+            {signedIn && <li><a href="#problemas" className={activeSection === 'problemas' ? 'active' : ''} onClick={closeMobileNav}>Problemas</a></li>}
+            <li><a href="#conta" className={activeSection === 'conta' ? 'active' : ''} onClick={closeMobileNav}>{signedIn ? 'Conta' : 'Entrar'}</a></li>
           </ul>
           <i
             className={`mobile-nav-toggle d-xl-none bi ${mobileNavOpen ? 'bi-x' : 'bi-list'}`}

@@ -21,3 +21,61 @@
   background-color: var(--accent-color, #e87532);
   color: #fff;
 }
+
+:root[data-bs-theme='dark'] {
+  --background-color: #171d24;
+  --default-color: #e2e8ef;
+  --heading-color: #f2f5f8;
+  --surface-color: #222b35;
+  --nav-color: #e2e8ef;
+  --nav-mobile-background-color: #222b35;
+}
+
+#selecao-mapa, #conta, #problemas, #carregar, #filtros {
+  scroll-margin-top: 6rem;
+}
+
+.inventory-marker span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px #24334999;
+}
+
+.detection-image {
+  position: relative;
+  display: inline-block;
+  align-self: start;
+  max-width: min(100%, 720px);
+  line-height: 0;
+}
+
+.detection-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.detection-box {
+  position: absolute;
+  border: 2px solid #ffdf52;
+  pointer-events: none;
+}
+
+.detection-box span {
+  display: block;
+  width: max-content;
+  max-width: 18vw;
+  padding: 0.15rem 0.25rem;
+  background: #25200c;
+  color: #fff;
+  font-size: 0.7rem;
+  line-height: 1.1;
+}
+
+.report-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

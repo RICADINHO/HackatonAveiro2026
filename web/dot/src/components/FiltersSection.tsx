@@ -2,19 +2,14 @@ import { useState, useEffect, useRef } from 'react'
 import type { FilterOption } from '../types.ts'
 import { CATEGORIAS } from '../constants.ts'
 
-export function FiltersSection() {
+export function FiltersSection({ onChange }: { onChange: (filters: string[]) => void }) {
   const [filtrosSelecionados, setFiltrosSelecionados] = useState<Map<string, string>>(new Map())
   const [openDropdown, setOpenDropdown] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Emite evento CustomEvent quando os filtros se alteram, como no script original
   useEffect(() => {
-    document.dispatchEvent(
-      new CustomEvent('filtros-alterados', {
-        detail: Array.from(filtrosSelecionados.keys()),
-      }),
-    )
-  }, [filtrosSelecionados])
+    onChange(Array.from(filtrosSelecionados.keys()))
+  }, [filtrosSelecionados, onChange])
 
   // Fecha dropdowns se clicar fora
   useEffect(() => {
@@ -57,7 +52,7 @@ export function FiltersSection() {
           {CATEGORIAS.map((categoria, indice) => {
             // Categoria sem dropdown: ex. iluminação pública
             if (!categoria.opcoes) {
-              const id = categoria.id || 'sem-id'
+              const id = categoria.id
               const selecionado = filtrosSelecionados.has(id)
               return (
                 <button
@@ -79,8 +74,6 @@ export function FiltersSection() {
                   type="button"
                   id={`categoria-filtro-${indice}`}
                   className={`btn btn-outline-primary dropdown-toggle ${isOpen ? 'show' : ''}`}
-                  data-bs-toggle="dropdown"
-                  data-bs-auto-close="outside"
                   aria-expanded={isOpen}
                   onClick={() => setOpenDropdown(isOpen ? null : indice)}
                 >
@@ -91,7 +84,7 @@ export function FiltersSection() {
                   className={`dropdown-menu ${isOpen ? 'show' : ''}`}
                   aria-labelledby={`categoria-filtro-${indice}`}
                 >
-                  {categoria.opcoes.map((opcao) => {
+                  {[{ id: categoria.id, nome: `Todos: ${categoria.nome}` }, ...categoria.opcoes].map((opcao) => {
                     const selecionado = filtrosSelecionados.has(opcao.id)
                     return (
                       <li key={opcao.id}>

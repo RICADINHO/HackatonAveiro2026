@@ -2,13 +2,10 @@ numpy
 python-dotenv
 requests
 mapbox-vector-tile
-pillow
+pillow>=10
 
-fastapi
+fastapi>=0.115
+pydantic>=2
 uvicorn[standard]
 python-multipart
-pyjwt[crypto]
 psycopg[binary,pool]
-pillow
-numpy
-onnxruntime

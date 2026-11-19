@@ -15,9 +15,13 @@
 # Vite + React + nodejs
 
 - Was created with `npm create vite@latest dot -- --template react-ts`
-- `cd dot`
+- `cd web/dot`
 - `npm install`
 - `npm run dev` to test locally
 - `npm run deploy` to deploy to github pages
 
 Site available at: https://ricadinho.github.io/HackatonAveiro2026/
+
+## Inventário, API e Skyloft
+
+Segue o [guia do servidor](server/README.md) para configurar o Supabase Auth, PostgreSQL/PostGIS, a API FastAPI, o Caddy e a ligação do frontend.

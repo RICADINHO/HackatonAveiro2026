@@ -2,6 +2,7 @@ import type { Category } from './types.ts'
 
 export const CATEGORIAS: Category[] = [
   {
+    id: 'sinalizacao',
     nome: 'Sinais de trânsito',
     opcoes: [
       { id: 'stop', nome: 'Stop' },
@@ -12,6 +13,7 @@ export const CATEGORIAS: Category[] = [
     ],
   },
   {
+    id: 'residuos',
     nome: 'Ecopontos e contentores',
     opcoes: [
       { id: 'subterraneo', nome: 'Contentor subterrâneo' },
