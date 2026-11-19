@@ -1,8 +1,20 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type CSSProperties } from 'react'
+import { CATEGORY_META, categoryForClass, classLabel } from '../constants.ts'
 import type { Detection } from '../types.ts'
 
-export function DetectionImage({ src, detections }: { src: Blob | string; detections: Detection[] }) {
+function detectionColor(detection: Detection) {
+  const category = categoryForClass(detection.predicted_class)
+  return category ? CATEGORY_META[category].color : 'var(--accent)'
+}
+
+export function DetectionImage({ src, detections, alt = 'Imagem processada', compact = false }: {
+  src: Blob | string
+  detections: Detection[]
+  alt?: string
+  compact?: boolean
+}) {
   const imageRef = useRef<HTMLImageElement>(null)
+
   useEffect(() => {
     const image = imageRef.current
     if (!image || typeof src === 'string') return
@@ -12,15 +24,27 @@ export function DetectionImage({ src, detections }: { src: Blob | string; detect
   }, [src])
 
   return (
-    <div className="detection-image">
-      <img ref={imageRef} src={typeof src === 'string' ? src : undefined} alt="Imagem processada" />
-      {detections.map(({ bbox: [x, y, width, height], label, predicted_class, confidence }, index) => (
-        <span className="detection-box" key={index} style={{
-          left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%`,
-        }}>
-          <span>{label ?? predicted_class} {Math.round(confidence * 100)}%</span>
-        </span>
-      ))}
+    <div className={`detection-image${compact ? ' detection-image--compact' : ''}`}>
+      <img ref={imageRef} src={typeof src === 'string' ? src : undefined} alt={alt} loading="lazy" />
+      {detections.map((detection, index) => {
+        const [x, y, width, height] = detection.bbox
+        const label = detection.label ?? (detection.predicted_class ? classLabel(detection.predicted_class) : 'Deteção')
+        return (
+          <span
+            key={`${index}-${x}-${y}`}
+            className="detection-box"
+            style={{
+              left: `${x * 100}%`,
+              top: `${y * 100}%`,
+              width: `${width * 100}%`,
+              height: `${height * 100}%`,
+              '--box-color': detectionColor(detection),
+            } as CSSProperties}
+          >
+            <span>{label} <b>{Math.round(detection.confidence * 100)}%</b></span>
+          </span>
+        )
+      })}
     </div>
   )
 }

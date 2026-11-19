@@ -1,28 +1,23 @@
 import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import sitemap from 'vite-plugin-sitemap'
 
-export default defineConfig(({ mode }) => ({
-  plugins: [
-    react(),
-    mode === 'pages' && sitemap({
-      hostname: 'https://ricadinho.github.io/HackatonAveiro2026',
-      dynamicRoutes: ['/'],
-    }),
-  ],
-  base: mode === 'pages' ? '/HackatonAveiro2026/' : '/',
+export default defineConfig({
+  plugins: [react()],
+  base: '/',
+  // The frontend env file lives in web/.env (one level above web/dot).
+  envDir: fileURLToPath(new URL('..', import.meta.url)),
   build: {
-    outDir: mode === 'pages' ? 'dist' : '../dist',
+    outDir: '../dist',
     emptyOutDir: true,
   },
   server: {
-    host: '0.0.0.0',          // listen on all interfaces, including the Tailscale one
-    allowedHosts: ['.ts.net'], // still required in Vite 6+
+    host: '0.0.0.0', // listen on all interfaces, including the Tailscale one
+    allowedHosts: ['.ts.net'],
     fs: { allow: [fileURLToPath(new URL('..', import.meta.url))] },
     proxy: {
       '/api': 'http://127.0.0.1:8000',
       '/img': 'http://127.0.0.1:8000',
     },
   },
-}))
+})

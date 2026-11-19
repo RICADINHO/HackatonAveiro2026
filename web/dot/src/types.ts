@@ -29,6 +29,8 @@ export interface Detection {
   confidence: number
   label?: string
   predicted_class?: string
+  latitude?: number
+  longitude?: number
 }
 
 export interface PublishedImage extends Coordinates {
@@ -50,6 +52,20 @@ export interface Preview {
   detections: Detection[]
 }
 
+export interface CameraPoint {
+  latitude: number | null
+  longitude: number | null
+  heading: number | null
+}
+
+export type AccountRole = 'technician' | 'authenticated'
+
+export interface Account {
+  id: string
+  public_name: string | null
+  role: AccountRole
+}
+
 export interface Report {
   id: string
   description: string
@@ -61,4 +77,3 @@ export interface Report {
   resolved_at: string | null
   resolved_by: string | null
 }
-
