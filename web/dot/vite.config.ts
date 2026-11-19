@@ -17,7 +17,8 @@ export default defineConfig(({ mode }) => ({
     emptyOutDir: true,
   },
   server: {
-    host: 'localhost',
+    host: '0.0.0.0',          // listen on all interfaces, including the Tailscale one
+    allowedHosts: ['.ts.net'], // still required in Vite 6+
     fs: { allow: [fileURLToPath(new URL('..', import.meta.url))] },
     proxy: {
       '/api': 'http://127.0.0.1:8000',
