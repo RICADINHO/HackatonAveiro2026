@@ -234,7 +234,7 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 ### Upload → publish flow
 
 1. `POST /api/previews` receives one image (max 12 MiB, JPEG/PNG/WebP).
-2. `imaging.prepare_photo` reads EXIF GPS/heading, applies EXIF orientation, detects furniture, and passes the image to `anonymization.anonymize`. It strips metadata and writes the anonymized JPEG to `images/private/<preview-id>.jpg` only after both privacy models succeed.
+2. `imaging.prepare_photo` reads EXIF GPS/heading, applies EXIF orientation, detects and classifies furniture, and passes the image to `anonymization.anonymize`. It strips metadata and writes the anonymized JPEG to `images/private/<preview-id>.jpg` only after both privacy models succeed.
 3. The preview row stores `metadata` (camera) and `detections` for 30 minutes.
 4. The client shows the blurred image with detection boxes and asks for position + heading (map picker or GPS).
 5. `POST /api/previews/{id}/publish` moves the file to `images/public/`, inserts the image and detections, and creates/merges items in one transaction.
@@ -244,7 +244,7 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 `server/imaging.py`:
 
 - `projection(heading, bbox)` estimates distance/bearing from the normalized detection box (horizontal offset → bearing, box size/vertical position → distance). It is a **best guess**, not calibrated.
-- `detect()` runs `yolo/detector_3classes.pt` in CPU mode before any redaction and loads the checkpoint once per process. It detects all three classes in the full image and checks overlapping tiles for small traffic signs in larger images. It remaps tile boxes to the full image and suppresses duplicate sign boxes.
+- `detect()` runs `yolo/detector_3classes.pt` in CPU mode before redaction and checks overlapping tiles for small signs and bins. With `yoloe-26s-seg.pt` in `<data-dir>/models`, it adds a full-image YOLOE pass using the bundled prompt embeddings. The detector normalizes the boxes and suppresses duplicates within each category.
 - `anonymization.anonymize()` runs RetinaFace ResNet34 (0.30) and YOLOv9-S 608 (0.25) via ONNX Runtime. It combines boxes from both, pads them, and applies Gaussian blur and pixelation. Anonymization failures return 503 and leave no staged preview.
 
 `server/inventory.py`:
@@ -322,7 +322,7 @@ There is no end-to-end browser test suite. If browser automation is unavailable,
 - Edit `web/dot/src/mapTiles.ts` and `web/.env`. Rebuild. Without a key the app intentionally falls back to OSM.
 
 **Extend the image processing pipeline**
-- Run furniture detection before anonymization and serve the processed JPEG. Keep the `Detection` return shape and normalized top-left bounding box coordinates when extending it. `classifier_sinais.pt` and `classifier_lixos.pt` are available for subtype classification.
+- Run furniture detection and subtype classification before anonymization. `classifier_sinais.pt` and `classifier_lixos.pt` classify crops from the generic sign and bin detections. Keep the generic label when a classifier is uncertain, fails to run, or outputs a subtype the inventory cannot map. Keep the `Detection` return shape and normalized top-left bounding box coordinates when extending the pipeline.
 
 **Add a configurable setting**
 - Add it to `Settings` and `Settings.from_env` in `server/app/config.py`, read from root `.env` or `os.environ`, then document it in `.env.example`. Do not add Vite variables to the root `.env`.

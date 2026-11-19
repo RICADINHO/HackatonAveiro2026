@@ -48,6 +48,8 @@ Cria a subpasta `models` na pasta de dados do servidor e descarrega estes dois f
 - `retinaface_r34.onnx` para rostos. [Descarregar o RetinaFace ResNet34](https://github.com/yakhyo/uniface/releases/download/weights/retinaface_r34.onnx)
 - `yolo-v9-s-608-license-plates-end2end.onnx` para matrículas. [Descarregar o YOLOv9-S 608](https://github.com/ankandrew/open-image-models/releases/download/assets/yolo-v9-s-608-license-plates-end2end.onnx)
 
+Para melhorar a deteção de sinais e contentores, coloca também `yoloe-26s-seg.pt` na mesma pasta. A app usa o ficheiro de categorias pré-calculado em `yolo/yoloe-26s-prompts.npz`. A deteção usa o modelo de três classes como base e acrescenta as caixas do YOLOE, quando esse ficheiro de pesos está disponível. [Descarregar o YOLOE-26s](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg.pt)
+
 ### 2. Preparar PostgreSQL e PostGIS
 
 Escolhe uma opção. Na opção A, a base de dados fica em `aveiro-data/postgres`, junto das imagens. Na opção B, fica num volume do Docker, fora de `aveiro-data`. A base e a pasta `aveiro-data` guardam coisas diferentes (dados estruturados e ficheiros de imagem), por isso copia-as sempre em conjunto.
@@ -150,5 +152,7 @@ Abre [a aplicação local](http://localhost:8000/). O build fica em `web/dist` e
 A pasta de dados predefinida é `aveiro-data` na tua pasta pessoal. Tem `images/public` para imagens publicadas, `images/private` para pré-visualizações e `models` para os modelos de anonimização. Usa `--data-dir` para escolher outra pasta. Se já tens imagens publicadas no Skyloft, aponta para a pasta que contém o diretório `images` existente. O servidor avisa se o caminho contiver OneDrive.
 
 O servidor corre `yolo/detector_3classes.pt` antes da anonimização. Depois junta as caixas de rostos (limiar de 30%) e matrículas (25%), acrescenta margem e aplica desfoque gaussiano e pixelização nessas áreas. A pré-visualização guarda o JPEG processado sem EXIF. Se faltar um dos modelos ou a inferência falhar, o servidor devolve 503 sem criar a pré-visualização. Confirma visualmente o desfoque antes de publicar.
+
+Antes do desfoque, os classificadores em `yolo/` analisam cada recorte de um sinal ou de um contentor genérico. O servidor usa os subtipos de sinais reconhecidos pelo inventário a partir de 70% de confiança e os de contentores a partir de 95%. O YOLOE também pode reconhecer diretamente o conjunto azul, verde e amarelo de uma ilha de reciclagem. Os outros resultados mantêm o rótulo genérico.
 
 ## GitHub

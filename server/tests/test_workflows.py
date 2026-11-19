@@ -16,7 +16,7 @@ from psycopg.conninfo import make_conninfo
 
 from server.app import Settings, create_app
 from server.anonymization import AnonymizationError, anonymize
-from server.imaging import Detection, detect, prepare_photo
+from server.imaging import Detection, classify_detections, detect, prepare_photo
 
 
 class CameraMetadata(unittest.TestCase):
@@ -32,14 +32,16 @@ class CameraMetadata(unittest.TestCase):
         with (
             TemporaryDirectory() as scratch,
             patch('server.imaging.detect', return_value=[]) as detector,
+            patch('server.imaging.classify_detections', return_value=[]) as classifier,
             patch('server.imaging.anonymize', side_effect=lambda photo, _: photo.copy()) as redactor,
         ):
             destination = Path(scratch) / 'processed.jpg'
             pipeline = Mock()
             pipeline.attach_mock(detector, 'detect')
+            pipeline.attach_mock(classifier, 'classify')
             pipeline.attach_mock(redactor, 'anonymize')
             camera, detections = prepare_photo(source.getvalue(), destination, Path(scratch))
-            self.assertEqual([call[0] for call in pipeline.mock_calls], ['detect', 'anonymize'])
+            self.assertEqual([call[0] for call in pipeline.mock_calls], ['detect', 'classify', 'anonymize'])
             self.assertAlmostEqual(camera['latitude'], 40.6416666667)
             self.assertAlmostEqual(camera['longitude'], -8.65)
             self.assertEqual(camera['heading'], 0)
@@ -68,7 +70,7 @@ class YoloDetection(unittest.TestCase):
                 Detection('sinalizacao', 'sinal-transito', 'Sinal de trânsito', 0.5, (0.75, 0.125, 0.25, 0.25)),
             ])
 
-    def test_remaps_tile_signs_and_suppresses_duplicate_and_cut_boxes(self):
+    def test_remaps_tile_detections_and_suppresses_duplicates_within_each_category(self):
         import numpy as np
         import torch
         from ultralytics.engine.results import Results
@@ -83,19 +85,78 @@ class YoloDetection(unittest.TestCase):
         def predict(source, **options):
             if source is image:
                 return [prediction_for(source, [[800, 660, 840, 700, 0.5, 2]])]
-            self.assertEqual(options['classes'], [2])
+            self.assertEqual(set(options['classes']), {0, 2})
             # Only the bottom-right crop contains the marked pixel.
             rows = [[80, 84, 120, 124, 0.75, 2], [300, 160, 340, 200, 0.625, 2],
+                    [80, 84, 120, 124, 0.875, 0], [80, 84, 120, 124, 0.625, 0],
+                    [690, 250, 720, 280, 0.9375, 0],
                     [0, 250, 18, 280, 0.875, 2]] if source.getpixel((700, 550)) == (255, 255, 255) else []
             return [prediction_for(source, rows)]
 
         image.putpixel((1420, 1126), (255, 255, 255))
         with patch('server.imaging._load_detector', return_value=Mock(names=names, predict=predict)):
             results = detect(image)
-        self.assertEqual([(item.confidence, item.bbox) for item in results], [
-            (0.75, (800 / 1440, 660 / 1152, 40 / 1440, 40 / 1152)),
-            (0.625, (1020 / 1440, 736 / 1152, 40 / 1440, 40 / 1152)),
+        self.assertEqual([(item.category, item.confidence, item.bbox) for item in results], [
+            ('residuos', 0.875, (800 / 1440, 660 / 1152, 40 / 1440, 40 / 1152)),
+            ('sinalizacao', 0.75, (800 / 1440, 660 / 1152, 40 / 1440, 40 / 1152)),
+            ('sinalizacao', 0.625, (1020 / 1440, 736 / 1152, 40 / 1440, 40 / 1152)),
         ])
+
+    def test_combines_optional_yoloe_with_primary_detections(self):
+        import numpy as np
+        import torch
+        from ultralytics.engine.results import Results
+
+        image = Image.new('RGB', (128, 64))
+        primary = Results(np.asarray(image), path='test.jpg', names={0: 'street_sign', 1: 'light_pole'},
+                          boxes=torch.tensor([[16, 8, 32, 24, 0.5, 0], [64, 0, 80, 48, 0.75, 1]]))
+        supplemental = Results(np.asarray(image), path='test.jpg',
+                               names={0: 'stop sign', 1: 'recycling container'},
+                               boxes=torch.tensor([[16, 8, 32, 24, 0.875, 0], [96, 8, 128, 24, 0.625, 1]]))
+        with (
+            TemporaryDirectory() as scratch,
+            patch('server.imaging._load_detector', return_value=Mock(predict=Mock(return_value=[primary]))),
+            patch('server.imaging._load_yoloe', return_value=Mock(predict=Mock(return_value=[supplemental]))) as load,
+        ):
+            models = Path(scratch)
+            self.assertEqual(len(detect(image, models)), 2)
+            load.assert_not_called()
+            weights = models / 'yoloe-26s-seg.pt'
+            weights.touch()
+            results = detect(image, models)
+            load.assert_called_once_with(weights)
+        self.assertEqual([(item.class_name, item.confidence) for item in results], [
+            ('poste-iluminacao', 0.75), ('contentor-lixo', 0.625), ('sinal-transito', 0.875),
+        ])
+
+
+class Classification(unittest.TestCase):
+    def test_maps_supported_subtypes_and_keeps_uncertain_detections_generic(self):
+        image = Image.new('RGB', (100, 80))
+        bbox = (0.2, 0.25, 0.3, 0.5)
+        traffic_sign = Detection('sinalizacao', 'sinal-transito', 'Sinal de trânsito', 0.8, bbox)
+        waste_bin = Detection('residuos', 'contentor-lixo', 'Contentor de lixo', 0.7, bbox)
+        recycling_island = Detection('residuos', 'ilha-reciclagem', 'Ilha de reciclagem', 0.86, bbox)
+
+        def prediction(class_name, confidence):
+            return Mock(names={0: class_name}, probs=Mock(top1=0, top1conf=confidence))
+
+        signs = Mock()
+        signs.predict.return_value = [prediction('eu_dfg_regulatory_stop', 0.98),
+                                      prediction('collect_organize_images', 0.99)]
+        bins = Mock()
+        bins.predict.return_value = [prediction('indiferenciado', 0.99),
+                                     prediction('indiferenciado', 0.88)]
+        models = {'classifier_sinais.pt': signs, 'classifier_lixos.pt': bins}
+        with patch('server.imaging._load_classifier', side_effect=models.__getitem__):
+            result = classify_detections(image, [traffic_sign, traffic_sign, waste_bin, waste_bin, recycling_island])
+        self.assertEqual([d.class_name for d in result], [
+            'stop', 'sinal-transito', 'indiferenciado', 'contentor-lixo', 'ilha-reciclagem',
+        ])
+        self.assertTrue(all(d.bbox == bbox for d in result))
+        self.assertEqual(result[0].confidence, traffic_sign.confidence)
+        self.assertEqual([crop.size for crop in signs.predict.call_args.args[0]], [(30, 40), (30, 40)])
+        self.assertEqual(len(bins.predict.call_args.args[0]), 2)
 
 
 class ImageAnonymization(unittest.TestCase):
