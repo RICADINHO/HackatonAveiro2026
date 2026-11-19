@@ -2,11 +2,6 @@ import { useEffect, useRef, type CSSProperties } from 'react'
 import { CATEGORY_META, categoryForClass, classLabel } from '../constants.ts'
 import type { Detection } from '../types.ts'
 
-function detectionColor(detection: Detection) {
-  const category = categoryForClass(detection.predicted_class)
-  return category ? CATEGORY_META[category].color : 'var(--accent)'
-}
-
 export function DetectionImage({ src, detections, alt = 'Imagem processada', compact = false }: {
   src: Blob | string
   detections: Detection[]
@@ -28,7 +23,9 @@ export function DetectionImage({ src, detections, alt = 'Imagem processada', com
       <img ref={imageRef} src={typeof src === 'string' ? src : undefined} alt={alt} loading="lazy" />
       {detections.map((detection, index) => {
         const [x, y, width, height] = detection.bbox
-        const label = detection.label ?? (detection.predicted_class ? classLabel(detection.predicted_class) : 'Deteção')
+        const className = detection.class_name ?? detection.predicted_class
+        const category = categoryForClass(className)
+        const label = detection.label ?? (className ? classLabel(className) : 'Deteção')
         return (
           <span
             key={`${index}-${x}-${y}`}
@@ -38,7 +35,7 @@ export function DetectionImage({ src, detections, alt = 'Imagem processada', com
               top: `${y * 100}%`,
               width: `${width * 100}%`,
               height: `${height * 100}%`,
-              '--box-color': detectionColor(detection),
+              '--box-color': category ? CATEGORY_META[category].color : 'var(--accent)',
             } as CSSProperties}
           >
             <span>{label} <b>{Math.round(detection.confidence * 100)}%</b></span>

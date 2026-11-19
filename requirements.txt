@@ -9,3 +9,4 @@ pydantic>=2
 uvicorn[standard]
 python-multipart
 psycopg[binary,pool]
+ultralytics-opencv-headless==8.4.215

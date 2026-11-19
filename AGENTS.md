@@ -45,14 +45,14 @@ The FastAPI process serves the built SPA, the API, and the images from one origi
 ├── .venv/                     ← existing uv-managed Python env (gitignored)
 ├── aveiro-data/               ← local Postgres cluster (gitignored)
 ├── Datasets/                  ← Mapillary/downloaded data (mostly gitignored)
-├── yolo/                      ← model/dataset experiments (not used by the app)
+├── yolo/                      ← detection checkpoint and subtype classifiers
 ├── dot/                       ← stray empty npm package; ignore it
 ├── server/
 │   ├── app/
 │   │   ├── __init__.py        ← FastAPI app, routes, auth, upload/publish logic
 │   │   ├── __main__.py        ← CLI entry point (--host, --port, --data-dir)
 │   │   └── config.py          ← settings, hardcoded Supabase/CORS/dedup values
-│   ├── imaging.py             ← EXIF, blur, detection, projection (placeholders)
+│   ├── imaging.py             ← EXIF, experimental blur, YOLO detection, projection
 │   ├── inventory.py           ← SQL for items/images/detections, dedupe, recompute
 │   ├── migrations/001_inventory.sql
 │   ├── schema.sql             ← psql entry point for migrations
@@ -99,7 +99,7 @@ nix develop
 
 # Python env (already present in this checkout)
 uv venv .venv --python 3.12
-uv pip install --python .venv -r requirements.txt
+uv pip install --python .venv --torch-backend cpu -r requirements.txt
 
 # Frontend deps
 cd web/dot && npm install && cd ../..
@@ -186,7 +186,7 @@ Default: `~/aveiro-data` (`Path.home() / 'aveiro-data'`, set in `server/app/conf
 <data-dir>/
 ├── images/public/<image-id>.jpg    ← published images, served at /img/<id>.jpg
 ├── images/private/<preview-id>.jpg ← staged previews, deleted after 30 min
-└── models/                          ← reserved for real models
+└── models/                          ← reserved for additional models
 ```
 
 The private and public image directories must not overlap; the app refuses to start otherwise.
@@ -241,7 +241,8 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 `server/imaging.py`:
 
 - `projection(heading, bbox)` estimates distance/bearing from the normalized detection box (horizontal offset → bearing, box size/vertical position → distance). It is a **best guess**, not calibrated.
-- `anonymize()` and `detect()` are **placeholders**. Blur covers the bottom half of the image; detection always returns one sign, one lamppost, one bin at fixed normalized boxes. Replace these functions with real models; keep their signatures (`anonymize(Image) -> Image`, `detect(Image) -> list[Detection]`).
+- `anonymize()` applies an experimental blur to the bottom half of the image.
+- `detect()` runs `yolo/detector_3classes.pt` on the blurred image in CPU mode and loads the checkpoint once per process. It returns zero or more normalized boxes with confidence scores for generic traffic signs, lamp posts and bins.
 - `PLACEHOLDER_BLUR = True` blocks binding to a non-loopback host unless `ALLOW_PLACEHOLDER_PUBLIC=1` is set in the process environment.
 
 `server/inventory.py`:
@@ -318,8 +319,8 @@ There is no end-to-end browser test suite. If browser automation is unavailable,
 **Change the map style/key**
 - Edit `web/dot/src/mapTiles.ts` and `web/.env`. Rebuild. Without a key the app intentionally falls back to OSM.
 
-**Replace the placeholder models**
-- Implement `anonymize()` and `detect()` in `server/imaging.py`. Keep the return shape (`Detection` dataclass) and the fact that `detect` receives the already-anonymized image. Load model paths from settings if you make them configurable. Remove `PLACEHOLDER_BLUR` only when real blur is in place.
+**Extend the image processing pipeline**
+- The detector in `server/imaging.py` uses the blurred image. Keep the `Detection` return shape and normalized top-left bounding box coordinates when extending it. `classifier_sinais.pt` and `classifier_lixos.pt` are available for subtype classification. Load model paths from settings if you make them configurable. Remove `PLACEHOLDER_BLUR` only when real blur is in place.
 
 **Add a configurable setting**
 - Add it to `Settings` and `Settings.from_env` in `server/app/config.py`, read from root `.env` or `os.environ`, then document it in `.env.example`. Do not add Vite variables to the root `.env`.
@@ -346,7 +347,7 @@ There is no end-to-end browser test suite. If browser automation is unavailable,
 - **Root `.env` only supplies `DATABASE_URL`.** Everything else in `config.py` is hardcoded. `ALLOW_PLACEHOLDER_PUBLIC` is read from the process environment, not `.env`.
 - **Frontend env is `web/.env`, not the root `.env`.** Vite `envDir` is set to `web/`. Variables must be prefixed `VITE_`.
 - **Supabase is contacted on every authenticated request.** No local JWT verification or caching. Expect latency and 503s when offline.
-- **Blur and detection are placeholders.** Do not use the app with real faces/plates and expect privacy. The server warns about this at startup.
+- **Blur is experimental.** The server warns at startup to use photos without visible faces or plates.
 - **Projection is approximate.** Item positions are best-effort; technicians can correct them.
 - **Dedupe radius is 50 m** and class-scoped. Changing it means editing `DEDUP_RADIUS_METERS` in `config.py`.
 - **Postgres in this checkout is on port 5433** (per root `.env`); the Docker instructions use 5432.

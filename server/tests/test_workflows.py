@@ -16,7 +16,7 @@ from psycopg.conninfo import make_conninfo
 
 from server.app import Settings, create_app
 from server.app.__main__ import checked_host
-from server.imaging import prepare_photo
+from server.imaging import Detection, detect, prepare_photo
 
 
 class CameraMetadata(unittest.TestCase):
@@ -29,15 +29,36 @@ class CameraMetadata(unittest.TestCase):
         }
         source = BytesIO()
         Image.new('RGB', (320, 240)).save(source, format='JPEG', exif=exif)
-        with TemporaryDirectory() as scratch:
+        with TemporaryDirectory() as scratch, patch('server.imaging.detect', return_value=[]):
             destination = Path(scratch) / 'processed.jpg'
             camera, detections = prepare_photo(source.getvalue(), destination)
             self.assertAlmostEqual(camera['latitude'], 40.6416666667)
             self.assertAlmostEqual(camera['longitude'], -8.65)
             self.assertEqual(camera['heading'], 0)
-            self.assertEqual(len(detections), 3)
+            self.assertEqual(detections, [])
             with Image.open(destination) as processed:
                 self.assertFalse(processed.getexif())
+
+
+class YoloDetection(unittest.TestCase):
+    def test_maps_classes_and_converts_boxes_to_top_left_coordinates(self):
+        import numpy as np
+        import torch
+        from ultralytics.engine.results import Results
+
+        image = Image.new('RGB', (128, 64))
+        prediction = Results(np.asarray(image), path='test.jpg',
+                             names={0: 'trash_container', 1: 'light_pole', 2: 'street_sign'},
+                             boxes=torch.tensor([[16, 16, 48, 32, 0.75, 0],
+                                                 [64, 0, 80, 48, 0.875, 1],
+                                                 [96, 8, 128, 24, 0.5, 2]]))
+        with patch('server.imaging._load_detector') as load_detector:
+            load_detector.return_value.predict.return_value = [prediction]
+            self.assertEqual(detect(image), [
+                Detection('residuos', 'contentor-lixo', 'Contentor de lixo', 0.75, (0.125, 0.25, 0.25, 0.25)),
+                Detection('iluminacao', 'poste-iluminacao', 'Poste de iluminação', 0.875, (0.5, 0., 0.125, 0.75)),
+                Detection('sinalizacao', 'sinal-transito', 'Sinal de trânsito', 0.5, (0.75, 0.125, 0.25, 0.25)),
+            ])
 
 
 class LocalBind(unittest.TestCase):
@@ -96,6 +117,11 @@ class InventoryWorkflow(unittest.TestCase):
         source.save(image_file, format='PNG', exif=exif)
         files = {'image': ('test.png', image_file.getvalue(), 'image/png')}
         camera = {'latitude': 40.6405, 'longitude': -8.6538, 'heading': 0}
+        detections = [
+            Detection('sinalizacao', 'stop', 'Stop', 0.87, (0.10, 0.30, 0.14, 0.22)),
+            Detection('iluminacao', 'poste-iluminacao', 'Poste de iluminação', 0.81, (0.42, 0.15, 0.10, 0.52)),
+            Detection('residuos', 'indiferenciado', 'Contentor de indiferenciados', 0.78, (0.66, 0.53, 0.22, 0.25)),
+        ]
 
         with TemporaryDirectory() as scratch:
             root = Path(scratch)
@@ -105,7 +131,11 @@ class InventoryWorkflow(unittest.TestCase):
             (frontend / 'assets' / 'app.js').write_text('console.log("Aveiro")', encoding='utf-8')
             settings = Settings(self.dsn, 'https://test.supabase.co', 'test-key', root,
                                 cors_origins=('https://ricadinho.github.io',), frontend_dir=frontend)
-            with patch('server.app.requests.get', side_effect=fake_auth), TestClient(create_app(settings)) as client:
+            with (
+                patch('server.app.requests.get', side_effect=fake_auth),
+                patch('server.imaging.detect', return_value=detections),
+                TestClient(create_app(settings)) as client,
+            ):
                 self.assertIn('Aveiro SPA', client.get('/').text)
                 self.assertIn('Aveiro SPA', client.get('/mapa/aveiro').text)
                 self.assertIn('console.log', client.get('/assets/app.js').text)

@@ -28,6 +28,7 @@ export interface Detection {
   bbox: [number, number, number, number]
   confidence: number
   label?: string
+  class_name?: string
   predicted_class?: string
   latitude?: number
   longitude?: number

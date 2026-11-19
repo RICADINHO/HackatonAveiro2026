@@ -35,12 +35,14 @@ export const CATEGORY_META: Record<InventoryCategory, CategoryMeta> = {
 export const CATEGORY_ORDER: InventoryCategory[] = ['sinalizacao', 'iluminacao', 'residuos']
 
 const CLASS_CATEGORY: Record<string, InventoryCategory> = {
+  'sinal-transito': 'sinalizacao',
   stop: 'sinalizacao',
   cedencia: 'sinalizacao',
   'velocidade-30': 'sinalizacao',
   'velocidade-50': 'sinalizacao',
   passadeira: 'sinalizacao',
   'poste-iluminacao': 'iluminacao',
+  'contentor-lixo': 'residuos',
   subterraneo: 'residuos',
   'ilha-reciclagem': 'residuos',
   indiferenciado: 'residuos',
@@ -51,12 +53,14 @@ export function categoryForClass(className?: string): InventoryCategory | undefi
 }
 
 export const CLASS_LABELS: Record<string, string> = {
+  'sinal-transito': 'Sinal de trânsito',
   stop: 'Sinal de stop',
   cedencia: 'Cedência de passagem',
   'velocidade-30': 'Limite de 30 km/h',
   'velocidade-50': 'Limite de 50 km/h',
   passadeira: 'Passagem para peões',
   'poste-iluminacao': 'Poste de iluminação',
+  'contentor-lixo': 'Contentor de lixo',
   subterraneo: 'Contentor subterrâneo',
   'ilha-reciclagem': 'Ilha de reciclagem',
   indiferenciado: 'Contentor de indiferenciados',

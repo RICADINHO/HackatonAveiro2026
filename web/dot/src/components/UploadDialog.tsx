@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { api, errorMessage, previewImage } from '../api.ts'
 import { CATEGORY_META, categoryForClass, classLabel } from '../constants.ts'
-import type { CameraPoint, Detection, Preview } from '../types.ts'
+import type { CameraPoint, Detection, InventoryCategory, Preview } from '../types.ts'
 import { DetectionImage } from './DetectionImage.tsx'
 import { LocationPicker } from './LocationPicker.tsx'
 import { Modal } from './Modal.tsx'
@@ -23,9 +23,10 @@ function missingFields(point: CameraPoint): string[] {
 }
 
 function detectionSummary(detections: Detection[]) {
-  const groups = new Map<string, { label: string; category?: string; count: number; confidence: number }>()
+  const groups = new Map<string, { label: string; category?: InventoryCategory; count: number; confidence: number }>()
   for (const detection of detections) {
-    const key = detection.predicted_class ?? detection.label ?? 'deteção'
+    const className = detection.class_name ?? detection.predicted_class
+    const key = className ?? detection.label ?? 'deteção'
     const current = groups.get(key)
     const confidence = detection.confidence
     if (current) {
@@ -33,8 +34,8 @@ function detectionSummary(detections: Detection[]) {
       current.confidence = Math.max(current.confidence, confidence)
     } else {
       groups.set(key, {
-        label: classLabel(detection.predicted_class ?? detection.label ?? 'Deteção'),
-        category: categoryForClass(detection.predicted_class),
+        label: detection.label ?? (className ? classLabel(className) : 'Deteção'),
+        category: categoryForClass(className),
         count: 1,
         confidence,
       })
@@ -217,7 +218,7 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
                   <li key={item.label}>
                     <span
                       className="detection-summary__dot"
-                      style={{ background: item.category ? CATEGORY_META[item.category as keyof typeof CATEGORY_META].color : 'var(--accent)' }}
+                      style={{ background: item.category ? CATEGORY_META[item.category].color : 'var(--accent)' }}
                     />
                     <span>{item.label}</span>
                     {item.count > 1 && <span className="detection-summary__count">×{item.count}</span>}

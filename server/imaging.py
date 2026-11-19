@@ -1,12 +1,26 @@
 from dataclasses import asdict, dataclass
+from functools import cache
 from io import BytesIO
 from pathlib import Path
+from threading import Lock
 
 from PIL import ExifTags, Image, ImageFilter, ImageOps
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 PLACEHOLDER_BLUR = True
 Image.MAX_IMAGE_PIXELS = 25_000_000
+
+DETECTOR_PATH = Path(__file__).resolve().parents[1] / 'yolo' / 'detector_3classes.pt'
+DETECTOR_CLASSES = {
+    'trash_container': ('residuos', 'contentor-lixo', 'Contentor de lixo'),
+    'light_pole': ('iluminacao', 'poste-iluminacao', 'Poste de iluminação'),
+    'street_sign': ('sinalizacao', 'sinal-transito', 'Sinal de trânsito'),
+}
+_detector_lock = Lock()
+
+
+class DetectorError(RuntimeError):
+    """The detector could not process the image."""
 
 
 @dataclass(frozen=True)
@@ -28,13 +42,38 @@ def anonymize(image: Image.Image) -> Image.Image:
     return output
 
 
+@cache
+def _load_detector():
+    if not DETECTOR_PATH.is_file():
+        raise FileNotFoundError(DETECTOR_PATH)
+
+    from ultralytics import YOLO
+
+    model = YOLO(DETECTOR_PATH, task='detect')
+    if set(model.names.values()) != DETECTOR_CLASSES.keys():
+        raise ValueError(f'Classes inesperadas no detetor: {model.names}')
+    return model
+
+
 def detect(image: Image.Image) -> list[Detection]:
-    """Placeholder. A real detector receives the anonymized image and returns normalized boxes."""
-    return [
-        Detection('sinalizacao', 'stop', 'Stop', 0.87, (0.10, 0.30, 0.14, 0.22)),
-        Detection('iluminacao', 'poste-iluminacao', 'Poste de iluminação', 0.81, (0.42, 0.15, 0.10, 0.52)),
-        Detection('residuos', 'indiferenciado', 'Contentor de indiferenciados', 0.78, (0.66, 0.53, 0.22, 0.25)),
-    ]
+    """Detect items in the anonymized image using normalized top-left boxes."""
+    try:
+        # YOLO shares mutable predictor state across calls, including its first setup.
+        with _detector_lock:
+            result, = _load_detector().predict(image, imgsz=768, device='cpu', verbose=False, save=False)
+    except Exception as exc:
+        raise DetectorError('Falhou a execução do detetor YOLO.') from exc
+
+    boxes = result.boxes.cpu()
+    detections = []
+    for coords, class_id, confidence in zip(boxes.xyxyn.tolist(), boxes.cls.int().tolist(),
+                                            boxes.conf.tolist(), strict=True):
+        left, top, right, bottom = coords
+        if right > left and bottom > top:
+            category, class_name, label = DETECTOR_CLASSES[result.names[class_id]]
+            detections.append(Detection(category, class_name, label, confidence,
+                                        (left, top, right - left, bottom - top)))
+    return detections
 
 
 def gps_coordinate(value, reference, positive, negative, limit):

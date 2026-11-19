@@ -34,7 +34,7 @@ Da raiz do repositório, reutiliza a `.venv` dos datasets. Executa a primeira li
 
 ```sh
 uv venv --python 3.12
-uv pip install --python .venv -r requirements.txt
+uv pip install --python .venv --torch-backend cpu -r requirements.txt
 ```
 
 A `.venv` é específica de cada máquina e arquitetura. Se veio de outra máquina (por exemplo via OneDrive), apaga-a e cria-a de novo.
@@ -143,5 +143,7 @@ Abre [a aplicação local](http://localhost:8000/). O build fica em `web/dist` e
 A pasta de dados predefinida é `aveiro-data` na raiz do repositório e está no `.gitignore`. Tem `images/public` para imagens publicadas, `images/private` para pré-visualizações, `models` para modelos e, na opção A, `postgres` para a base de dados. Usa `--data-dir` ou altera `DATA_DIR` em `server/app/config.py` para escolher outra pasta. Em particular, se já tens imagens publicadas no Skyloft, aponta para a pasta que contém o diretório `images` existente. O servidor avisa se o caminho contiver OneDrive.
 
 O servidor avisa ao arrancar enquanto o desfoque for experimental. Usa imagens de demonstração sem rostos nem matrículas visíveis. Para arrancar num endereço que não seja loopback, define explicitamente `ALLOW_PLACEHOLDER_PUBLIC=1` no ambiente do terminal. Em PowerShell usa `$env:ALLOW_PLACEHOLDER_PUBLIC = '1'`. Em Linux usa `export ALLOW_PLACEHOLDER_PUBLIC=1`.
+
+Na primeira pré-visualização, o servidor carrega `yolo/detector_3classes.pt` e analisa a imagem desfocada em CPU. As caixas mostram a classe e a confiança de cada deteção. Os sinais de trânsito e os contentores recebem rótulos genéricos nesta versão.
 
 ## GitHub
