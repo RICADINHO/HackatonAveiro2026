@@ -68,6 +68,35 @@ class YoloDetection(unittest.TestCase):
                 Detection('sinalizacao', 'sinal-transito', 'Sinal de trânsito', 0.5, (0.75, 0.125, 0.25, 0.25)),
             ])
 
+    def test_remaps_tile_signs_and_suppresses_duplicate_and_cut_boxes(self):
+        import numpy as np
+        import torch
+        from ultralytics.engine.results import Results
+
+        image = Image.new('RGB', (1440, 1152))
+        names = {0: 'trash_container', 1: 'light_pole', 2: 'street_sign'}
+
+        def prediction_for(source, rows):
+            return Results(np.asarray(source), path='test.jpg', names=names,
+                           boxes=torch.tensor(rows).reshape(-1, 6))
+
+        def predict(source, **options):
+            if source is image:
+                return [prediction_for(source, [[800, 660, 840, 700, 0.5, 2]])]
+            self.assertEqual(options['classes'], [2])
+            # Only the bottom-right crop contains the marked pixel.
+            rows = [[80, 84, 120, 124, 0.75, 2], [300, 160, 340, 200, 0.625, 2],
+                    [0, 250, 18, 280, 0.875, 2]] if source.getpixel((700, 550)) == (255, 255, 255) else []
+            return [prediction_for(source, rows)]
+
+        image.putpixel((1420, 1126), (255, 255, 255))
+        with patch('server.imaging._load_detector', return_value=Mock(names=names, predict=predict)):
+            results = detect(image)
+        self.assertEqual([(item.confidence, item.bbox) for item in results], [
+            (0.75, (800 / 1440, 660 / 1152, 40 / 1440, 40 / 1152)),
+            (0.625, (1020 / 1440, 736 / 1152, 40 / 1440, 40 / 1152)),
+        ])
+
 
 class ImageAnonymization(unittest.TestCase):
     def test_redacts_both_types_of_regions(self):

@@ -244,7 +244,7 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 `server/imaging.py`:
 
 - `projection(heading, bbox)` estimates distance/bearing from the normalized detection box (horizontal offset → bearing, box size/vertical position → distance). It is a **best guess**, not calibrated.
-- `detect()` runs `yolo/detector_3classes.pt` in CPU mode before any redaction and loads the checkpoint once per process. It returns normalized boxes with confidence scores for generic traffic signs, lamp posts and bins.
+- `detect()` runs `yolo/detector_3classes.pt` in CPU mode before any redaction and loads the checkpoint once per process. It detects all three classes in the full image and checks overlapping tiles for small traffic signs in larger images. It remaps tile boxes to the full image and suppresses duplicate sign boxes.
 - `anonymization.anonymize()` runs RetinaFace ResNet34 (0.30) and YOLOv9-S 608 (0.25) via ONNX Runtime. It combines boxes from both, pads them, and applies Gaussian blur and pixelation. Anonymization failures return 503 and leave no staged preview.
 
 `server/inventory.py`:
