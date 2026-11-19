@@ -150,7 +150,7 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
       open={open}
       onClose={onClose}
       title="Carregar imagem"
-      subtitle="A imagem é desfocada (rostos e matrículas) e analisada antes de seres tu a publicar."
+      subtitle="Detetamos mobiliário urbano e desfocamos rostos e matrículas antes da publicação."
       icon="bi-cloud-arrow-up"
       size="xl"
     >
@@ -182,14 +182,10 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
             <i className={`bi ${busy ? 'bi-hourglass-split' : 'bi-image'}`} aria-hidden="true" />
           </span>
           <h3>{busy ? 'A processar a imagem…' : 'Arrasta uma fotografia para aqui'}</h3>
-          <p>{busy ? 'A desfocar rostos e matrículas e a procurar mobiliário urbano.' : 'JPEG, PNG ou WebP · até 12 MiB'}</p>
+          <p>{busy ? 'A detetar mobiliário urbano e a desfocar rostos e matrículas.' : 'JPEG, PNG ou WebP · até 12 MiB'}</p>
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => inputRef.current?.click()}>
             <i className="bi bi-folder2-open" aria-hidden="true" /> Escolher ficheiro
           </button>
-          <div className="dropzone__note">
-            <i className="bi bi-shield-check" aria-hidden="true" />
-            O desfoque é experimental. Usa imagens sem rostos ou matrículas visíveis.
-          </div>
         </div>
       )}
 
@@ -199,6 +195,7 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
             <div className="upload-review__image">
               <DetectionImage src={staged.image} detections={staged.preview.detections} alt="Imagem desfocada com deteções" />
             </div>
+            <p className="field-hint">Confirma que os rostos e as matrículas estão desfocados antes de publicar.</p>
             <div className="upload-review__file">
               <i className="bi bi-file-earmark-image" aria-hidden="true" />
               <span>{staged.fileName}</span>

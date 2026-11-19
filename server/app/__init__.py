@@ -21,6 +21,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from .. import inventory
+from ..anonymization import AnonymizationError
 from ..imaging import MAX_IMAGE_BYTES, DetectorError, prepare_photo
 from .config import Settings
 
@@ -198,7 +199,7 @@ def create_app(settings: Settings):
         preview_id = uuid4()
         path = private_dir / f'{preview_id}.jpg'
         try:
-            camera, detections = prepare_photo(contents, path)
+            camera, detections = prepare_photo(contents, path, models_dir)
             with pool.connection() as db:
                 db.execute('INSERT INTO aveiro.image_previews (id, owner_id, metadata, detections) VALUES (%s,%s,%s,%s)',
                            (preview_id, user.id, Jsonb(camera), Jsonb(detections)))
@@ -206,6 +207,10 @@ def create_app(settings: Settings):
             remove_file(path)
             logger.exception('Falhou a deteção de mobiliário urbano')
             raise HTTPException(503, 'O detetor de mobiliário urbano está indisponível.') from exc
+        except AnonymizationError as exc:
+            remove_file(path)
+            logger.exception('Falhou a anonimização da imagem')
+            raise HTTPException(503, 'A anonimização de rostos e matrículas está indisponível.') from exc
         except (ValueError, SyntaxError, Image.DecompressionBombError) as exc:
             remove_file(path)
             raise HTTPException(422, 'Seleciona uma imagem JPEG, PNG ou WebP válida.') from exc

@@ -15,7 +15,7 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from server.app import Settings, create_app
-from server.app.__main__ import checked_host
+from server.anonymization import AnonymizationError, anonymize
 from server.imaging import Detection, detect, prepare_photo
 
 
@@ -29,9 +29,17 @@ class CameraMetadata(unittest.TestCase):
         }
         source = BytesIO()
         Image.new('RGB', (320, 240)).save(source, format='JPEG', exif=exif)
-        with TemporaryDirectory() as scratch, patch('server.imaging.detect', return_value=[]):
+        with (
+            TemporaryDirectory() as scratch,
+            patch('server.imaging.detect', return_value=[]) as detector,
+            patch('server.imaging.anonymize', side_effect=lambda photo, _: photo.copy()) as redactor,
+        ):
             destination = Path(scratch) / 'processed.jpg'
-            camera, detections = prepare_photo(source.getvalue(), destination)
+            pipeline = Mock()
+            pipeline.attach_mock(detector, 'detect')
+            pipeline.attach_mock(redactor, 'anonymize')
+            camera, detections = prepare_photo(source.getvalue(), destination, Path(scratch))
+            self.assertEqual([call[0] for call in pipeline.mock_calls], ['detect', 'anonymize'])
             self.assertAlmostEqual(camera['latitude'], 40.6416666667)
             self.assertAlmostEqual(camera['longitude'], -8.65)
             self.assertEqual(camera['heading'], 0)
@@ -61,16 +69,22 @@ class YoloDetection(unittest.TestCase):
             ])
 
 
-class LocalBind(unittest.TestCase):
-    def test_placeholder_requires_explicit_opt_in_for_non_loopback(self):
-        with patch.dict(os.environ, {'ALLOW_PLACEHOLDER_PUBLIC': '0'}):
-            self.assertEqual(checked_host('localhost'), '127.0.0.1')
-            self.assertEqual(checked_host('::1'), '::1')
-            for host in ('0.0.0.0', '::', '192.168.0.1'):
-                with self.assertRaises(ValueError):
-                    checked_host(host)
-        with patch.dict(os.environ, {'ALLOW_PLACEHOLDER_PUBLIC': '1'}):
-            self.assertEqual(checked_host('0.0.0.0'), '0.0.0.0')
+class ImageAnonymization(unittest.TestCase):
+    def test_redacts_both_types_of_regions(self):
+        photo = Image.new('RGB', (120, 100), 'white')
+        draw = ImageDraw.Draw(photo)
+        draw.rectangle((0, 0, 18, 16), fill='black')
+        draw.rectangle((70, 75, 95, 90), fill='black')
+        with (
+            patch('server.anonymization._load_model'),
+            patch('server.anonymization._face_boxes', return_value=[(0, 0, 19, 17)]),
+            patch('server.anonymization._plate_boxes', return_value=[(70, 75, 96, 91)]),
+        ):
+            redacted = anonymize(photo, Path('models'))
+        self.assertEqual(redacted.size, photo.size)
+        for point in ((9, 8), (83, 82)):
+            self.assertNotEqual(redacted.getpixel(point), photo.getpixel(point))
+        self.assertEqual(redacted.getpixel((50, 50)), photo.getpixel((50, 50)))
 
 
 @unittest.skipUnless(os.getenv('AVEIRO_TEST_DATABASE_URL'), 'PostGIS test connection not configured')
@@ -134,6 +148,9 @@ class InventoryWorkflow(unittest.TestCase):
             with (
                 patch('server.app.requests.get', side_effect=fake_auth),
                 patch('server.imaging.detect', return_value=detections),
+                patch('server.anonymization._load_model'),
+                patch('server.anonymization._face_boxes', return_value=[]),
+                patch('server.anonymization._plate_boxes', return_value=[(40, 160, 101, 201)]),
                 TestClient(create_app(settings)) as client,
             ):
                 self.assertIn('Aveiro SPA', client.get('/').text)
@@ -151,6 +168,9 @@ class InventoryWorkflow(unittest.TestCase):
                 self.assertEqual(client.post('/previews', files=files).status_code, 401)
                 self.assertEqual(client.post('/previews', files={'image': ('broken.jpg', b'invalid')},
                                              headers=auth('member')).status_code, 422)
+                with patch('server.imaging.anonymize', side_effect=AnonymizationError):
+                    self.assertEqual(client.post('/previews', headers=auth('member'), files=files).status_code, 503)
+                self.assertEqual(list((root / 'images' / 'private').iterdir()), [])
 
                 def prepare():
                     response = client.post('/previews', headers=auth('member'), files=files)

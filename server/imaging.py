@@ -4,10 +4,11 @@ from io import BytesIO
 from pathlib import Path
 from threading import Lock
 
-from PIL import ExifTags, Image, ImageFilter, ImageOps
+from PIL import ExifTags, Image, ImageOps
+
+from .anonymization import anonymize
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
-PLACEHOLDER_BLUR = True
 Image.MAX_IMAGE_PIXELS = 25_000_000
 
 DETECTOR_PATH = Path(__file__).resolve().parents[1] / 'yolo' / 'detector_3classes.pt'
@@ -32,16 +33,6 @@ class Detection:
     bbox: tuple[float, float, float, float]
 
 
-def anonymize(image: Image.Image) -> Image.Image:
-    """Placeholder. Replace with face and number plate localization and blurring."""
-    width, height = image.size
-    region = (0, height // 2, width, height)
-    blurred = image.crop(region).filter(ImageFilter.GaussianBlur(max(12, min(image.size) / 16)))
-    output = image.copy()
-    output.paste(blurred, region)
-    return output
-
-
 @cache
 def _load_detector():
     if not DETECTOR_PATH.is_file():
@@ -56,7 +47,7 @@ def _load_detector():
 
 
 def detect(image: Image.Image) -> list[Detection]:
-    """Detect items in the anonymized image using normalized top-left boxes."""
+    """Detect items using normalized top-left boxes."""
     try:
         # YOLO shares mutable predictor state across calls, including its first setup.
         with _detector_lock:
@@ -108,7 +99,7 @@ def read_camera(image):
     }
 
 
-def prepare_photo(contents: bytes, destination: Path):
+def prepare_photo(contents: bytes, destination: Path, models_dir: Path):
     with Image.open(BytesIO(contents), formats=['JPEG', 'PNG', 'WEBP']) as original:
         if original.width * original.height > Image.MAX_IMAGE_PIXELS:
             raise Image.DecompressionBombError('Image exceeds pixel limit')
@@ -117,8 +108,8 @@ def prepare_photo(contents: bytes, destination: Path):
         camera = read_camera(original)
         photo = ImageOps.exif_transpose(original).convert('RGB')
     photo.thumbnail((1920, 1920))
-    redacted = anonymize(photo)
-    detections = [asdict(detection) for detection in detect(redacted)]
+    detections = [asdict(detection) for detection in detect(photo)]
+    redacted = anonymize(photo, models_dir)
     # An explicit re-encode leaves out the source EXIF, ICC and embedded thumbnails.
     redacted.info.clear()
     with destination.open('xb') as output:

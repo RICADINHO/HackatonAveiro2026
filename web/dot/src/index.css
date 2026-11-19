@@ -2014,19 +2014,6 @@ a {
   margin-top: 6px;
 }
 
-.dropzone__note {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-
-.dropzone__note i {
-  color: var(--success);
-}
-
 .upload-review {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(330px, 420px);

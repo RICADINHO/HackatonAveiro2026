@@ -10,7 +10,7 @@ If something here disagrees with the code, trust the code and update this file.
 
 A map-first web app for the **urban furniture inventory of Aveiro** (traffic signs, public lighting, waste bins).
 
-- Users upload photos. Each photo is blurred, run through a detector, and the detections are projected into map coordinates using the camera position + heading.
+- Users upload photos. The furniture detector runs before face and plate anonymization. Furniture detections are projected into map coordinates using the camera position and heading.
 - Detections of the same class within a radius are merged into one inventory item.
 - Anyone can browse the map and item details.
 - Logged-in users can upload images and file reports.
@@ -52,7 +52,8 @@ The FastAPI process serves the built SPA, the API, and the images from one origi
 │   │   ├── __init__.py        ← FastAPI app, routes, auth, upload/publish logic
 │   │   ├── __main__.py        ← CLI entry point (--host, --port, --data-dir)
 │   │   └── config.py          ← settings, hardcoded Supabase/CORS/dedup values
-│   ├── imaging.py             ← EXIF, experimental blur, YOLO detection, projection
+│   ├── imaging.py             ← EXIF, YOLO detection, JPEG preparation, projection
+│   ├── anonymization.py       ← face and plate detection, blur and pixelation
 │   ├── inventory.py           ← SQL for items/images/detections, dedupe, recompute
 │   ├── migrations/001_inventory.sql
 │   ├── schema.sql             ← psql entry point for migrations
@@ -105,6 +106,8 @@ uv pip install --python .venv --torch-backend cpu -r requirements.txt
 cd web/dot && npm install && cd ../..
 ```
 
+Download the two ONNX anonymization models into `<data-dir>/models` using the [server setup instructions](server/README.md#modelos-de-anonimização).
+
 ### Environment files
 
 Two different env files, for two different runtimes. Do not mix them up.
@@ -116,7 +119,7 @@ DATABASE_URL=postgresql://aveiro@127.0.0.1:5433/aveiro
 # Optional: MAPILLARY_ACCESS_TOKEN=... (dataset scripts only)
 ```
 
-`server/app/config.py` loads it with `dotenv_values`, but **only `DATABASE_URL` is actually consumed**. `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `CORS_ORIGINS`, and `DEDUP_RADIUS_METERS` are hardcoded constants in that file. Other variables in `.env.example` (`IMAGE_DIR`, `PUBLIC_IMAGE_BASE_URL`, model paths) are aspirational and currently ignored. If you need them configurable, implement it in `config.py` first.
+`server/app/config.py` loads it with `dotenv_values`, but **only `DATABASE_URL` is actually consumed**. `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `CORS_ORIGINS`, and `DEDUP_RADIUS_METERS` are hardcoded constants in that file. Other variables in `.env.example` such as `IMAGE_DIR` and `PUBLIC_IMAGE_BASE_URL` are aspirational and currently ignored. If you need them configurable, implement it in `config.py` first.
 
 **`web/.env`** — read by Vite at build/dev time:
 
@@ -186,7 +189,7 @@ Default: `~/aveiro-data` (`Path.home() / 'aveiro-data'`, set in `server/app/conf
 <data-dir>/
 ├── images/public/<image-id>.jpg    ← published images, served at /img/<id>.jpg
 ├── images/private/<preview-id>.jpg ← staged previews, deleted after 30 min
-└── models/                          ← reserved for additional models
+└── models/                          ← RetinaFace ResNet34 and YOLOv9-S 608 ONNX weights
 ```
 
 The private and public image directories must not overlap; the app refuses to start otherwise.
@@ -214,7 +217,7 @@ Entry point: `server/app/__main__.py` → `Settings.from_env()` → `create_app(
 | GET | `/items` | public | List items; filters `?category=` and `?class_name=` (repeatable) |
 | GET | `/items/{id}` | public | Item detail with its images and detections |
 | GET | `/images` | technician | All published images |
-| POST | `/previews` | user | Upload + blur + detect; returns `{id, camera, detections}` |
+| POST | `/previews` | user | Detect furniture, anonymize, and return `{id, camera, detections}` |
 | GET | `/previews/{id}/image` | owner | Blurred staged JPEG |
 | POST | `/previews/{id}/publish` | owner | Publish with manual `{latitude, longitude, heading}` |
 | GET | `/published/{id}` | user | 204 probe used to detect already-published previews |
@@ -231,7 +234,7 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 ### Upload → publish flow
 
 1. `POST /api/previews` receives one image (max 12 MiB, JPEG/PNG/WebP).
-2. `imaging.prepare_photo` reads EXIF GPS/heading, applies EXIF orientation, strips EXIF, blurs, detects, and writes a JPEG to `images/private/<preview-id>.jpg`.
+2. `imaging.prepare_photo` reads EXIF GPS/heading, applies EXIF orientation, detects furniture, and passes the image to `anonymization.anonymize`. It strips metadata and writes the anonymized JPEG to `images/private/<preview-id>.jpg` only after both privacy models succeed.
 3. The preview row stores `metadata` (camera) and `detections` for 30 minutes.
 4. The client shows the blurred image with detection boxes and asks for position + heading (map picker or GPS).
 5. `POST /api/previews/{id}/publish` moves the file to `images/public/`, inserts the image and detections, and creates/merges items in one transaction.
@@ -241,9 +244,8 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 `server/imaging.py`:
 
 - `projection(heading, bbox)` estimates distance/bearing from the normalized detection box (horizontal offset → bearing, box size/vertical position → distance). It is a **best guess**, not calibrated.
-- `anonymize()` applies an experimental blur to the bottom half of the image.
-- `detect()` runs `yolo/detector_3classes.pt` on the blurred image in CPU mode and loads the checkpoint once per process. It returns zero or more normalized boxes with confidence scores for generic traffic signs, lamp posts and bins.
-- `PLACEHOLDER_BLUR = True` blocks binding to a non-loopback host unless `ALLOW_PLACEHOLDER_PUBLIC=1` is set in the process environment.
+- `detect()` runs `yolo/detector_3classes.pt` in CPU mode before any redaction and loads the checkpoint once per process. It returns normalized boxes with confidence scores for generic traffic signs, lamp posts and bins.
+- `anonymization.anonymize()` runs RetinaFace ResNet34 (0.30) and YOLOv9-S 608 (0.25) via ONNX Runtime. It combines boxes from both, pads them, and applies Gaussian blur and pixelation. Anonymization failures return 503 and leave no staged preview.
 
 `server/inventory.py`:
 
@@ -320,7 +322,7 @@ There is no end-to-end browser test suite. If browser automation is unavailable,
 - Edit `web/dot/src/mapTiles.ts` and `web/.env`. Rebuild. Without a key the app intentionally falls back to OSM.
 
 **Extend the image processing pipeline**
-- The detector in `server/imaging.py` uses the blurred image. Keep the `Detection` return shape and normalized top-left bounding box coordinates when extending it. `classifier_sinais.pt` and `classifier_lixos.pt` are available for subtype classification. Load model paths from settings if you make them configurable. Remove `PLACEHOLDER_BLUR` only when real blur is in place.
+- Run furniture detection before anonymization and serve the processed JPEG. Keep the `Detection` return shape and normalized top-left bounding box coordinates when extending it. `classifier_sinais.pt` and `classifier_lixos.pt` are available for subtype classification.
 
 **Add a configurable setting**
 - Add it to `Settings` and `Settings.from_env` in `server/app/config.py`, read from root `.env` or `os.environ`, then document it in `.env.example`. Do not add Vite variables to the root `.env`.
@@ -344,10 +346,10 @@ There is no end-to-end browser test suite. If browser automation is unavailable,
 ## 10. Known gotchas / current state
 
 - **`README.md` is partly stale.** It says the default data dir is `aveiro-data/` in the repo root; the code actually defaults to `~/aveiro-data`. It also documents root `.env` variables that `config.py` ignores.
-- **Root `.env` only supplies `DATABASE_URL`.** Everything else in `config.py` is hardcoded. `ALLOW_PLACEHOLDER_PUBLIC` is read from the process environment, not `.env`.
+- **Root `.env` only supplies `DATABASE_URL`.** Everything else in `config.py` is hardcoded.
 - **Frontend env is `web/.env`, not the root `.env`.** Vite `envDir` is set to `web/`. Variables must be prefixed `VITE_`.
 - **Supabase is contacted on every authenticated request.** No local JWT verification or caching. Expect latency and 503s when offline.
-- **Blur is experimental.** The server warns at startup to use photos without visible faces or plates.
+- **Anonymization depends on the two ONNX weights.** Verify the preview before publishing, especially for small or partially hidden faces and plates.
 - **Projection is approximate.** Item positions are best-effort; technicians can correct them.
 - **Dedupe radius is 50 m** and class-scoped. Changing it means editing `DEDUP_RADIUS_METERS` in `config.py`.
 - **Postgres in this checkout is on port 5433** (per root `.env`); the Docker instructions use 5432.

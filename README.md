@@ -33,9 +33,11 @@ VITE_CARTO_API_KEY=...
 
 `VITE_CARTO_API_KEY` é a chave dos tiles do mapa (CARTO). É pública por desenho — vai no bundle do browser e só permite ler tiles. Cria uma em <https://carto.com/>. Sem chave, o mapa recua para os tiles do OpenStreetMap.
 
-O `.env` da raiz continua a ser usado pelo backend Python (base de dados, Supabase Auth, modelos).
+O backend lê `DATABASE_URL` do `.env` da raiz.
 
 ## Correr backend
+
+Instala os [modelos de anonimização](server/README.md#modelos-de-anonimização) na pasta de dados antes de testar o upload.
 
 ```sh
 uv run --python .venv python -m server.app

@@ -10,3 +10,5 @@ uvicorn[standard]
 python-multipart
 psycopg[binary,pool]
 ultralytics-opencv-headless==8.4.215
+onnxruntime>=1.19.2,<2
+opencv-python-headless
