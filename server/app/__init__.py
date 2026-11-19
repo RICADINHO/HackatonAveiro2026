@@ -369,6 +369,8 @@ def create_app(settings: Settings):
         ):
             raise HTTPException(404)
         if asset.is_file():
+            if asset.suffix.lower() in {'.js', '.mjs'}:
+                return FileResponse(asset, media_type='text/javascript')
             return FileResponse(asset)
         if namespace == 'assets' or Path(path).suffix:
             raise HTTPException(404)
