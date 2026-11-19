@@ -1,12 +1,34 @@
 # Inventário urbano de Aveiro
 
-## Correr localmente
+## Primeira configuração
 
-O procedimento é o mesmo no portátil e no Skyloft. O FastAPI serve a aplicação compilada, a API em `/api` e os JPEG publicados em `/img`. O Supabase continua a gerir as contas e as sessões.
+Estes passos fazem-se uma vez por máquina. O FastAPI serve a aplicação compilada, a API em `/api` e os JPEG publicados em `/img`. O Supabase continua a gerir as contas e as sessões. Para o dia a dia, vê [Correr de cada vez](../README.md#correr-de-cada-vez).
 
 ### 1. Preparar o ambiente
 
-Instala Node.js 22.12 ou posterior, Python 3.12, uv e PostgreSQL com PostGIS. Podes usar uma instalação nativa de PostgreSQL ou o Docker. Em PowerShell, usa `npm.cmd` se a política local bloquear `npm.ps1`.
+Precisas de Node.js 22.12 ou posterior, Python 3.12, uv e PostgreSQL 16 ou posterior com PostGIS. O passo 2 explica como ter o PostgreSQL com ou sem Docker.
+
+#### Nix (recomendado)
+
+Acrescenta Node.js e PostgreSQL com PostGIS ao `devShell` do `flake.nix` da raiz, ao lado de `uv` e `python312`:
+
+```nix
+packages = [
+  pkgs.uv
+  pkgs.git
+  pkgs.python312
+  pkgs.nodejs_22
+  (pkgs.postgresql_16.withPackages (ps: [ ps.postgis ]))
+];
+```
+
+Entra no shell com `nix develop` (ou deixa o direnv fazê-lo com `use flake`) e confirma `node --version`. Não definas `UV_PYTHON` no `shellHook`: o `uv pip` passa a apontar para o Python do `/nix/store`, que é só de leitura, e falha.
+
+#### Outros ambientes
+
+Instala Node.js, Python 3.12 e uv. Em PowerShell, usa `npm.cmd` se a política local bloquear `npm.ps1`.
+
+#### Ambiente Python (todos)
 
 Da raiz do repositório, reutiliza a `.venv` dos datasets. Executa a primeira linha se o ambiente ainda não existir.
 
@@ -15,23 +37,46 @@ uv venv --python 3.12
 uv pip install --python .venv -r requirements.txt
 ```
 
-Cria ou edita o `.env` na raiz a partir de [`.env.example`](../.env.example). Define `DATABASE_URL` com a ligação ao PostgreSQL da máquina. `MAPILLARY_ACCESS_TOKEN` serve para os datasets. A API valida a sessão no Supabase e usa a chave publicável em código.
+A `.venv` é específica de cada máquina e arquitetura. Se veio de outra máquina (por exemplo via OneDrive), apaga-a e cria-a de novo.
+
+Cria ou edita o `.env` na raiz a partir de [`.env.example`](../.env.example). Define `DATABASE_URL` com a ligação indicada na opção que escolheres no passo 2. `MAPILLARY_ACCESS_TOKEN` serve para os datasets. A API valida a sessão no Supabase e usa a chave publicável em código.
 
 ### 2. Preparar PostgreSQL e PostGIS
 
-Numa instalação nativa, cria a base `aveiro` com o utilizador `aveiro` como proprietário. Instala PostGIS na instância e, como administrador de PostgreSQL, ativa a extensão na base.
+Escolhe uma opção. Na opção A, a base de dados fica em `aveiro-data/postgres`, junto das imagens. Na opção B, fica num volume do Docker, fora de `aveiro-data`. A base e a pasta `aveiro-data` guardam coisas diferentes (dados estruturados e ficheiros de imagem), por isso copia-as sempre em conjunto.
 
-```sql
-CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
-```
+#### Opção A: cluster local, sem Docker
 
-Depois, aplica as migrações como proprietário da base, a partir da raiz do repositório.
+Precisas dos programas `initdb`, `pg_ctl`, `createdb` e `psql` no `PATH`.
+
+- **Nix:** já vêm no `nix develop`.
+- **Debian/Ubuntu:** `sudo apt install postgresql-16 postgresql-16-postgis-3`. Os programas ficam em `/usr/lib/postgresql/16/bin`, que não está no `PATH`: acrescenta essa pasta ao `PATH`. O serviço do sistema que o apt arranca pode ficar parado ou ligado, porque aqui usamos a porta 5433.
+- **macOS:** `brew install postgis` (instala também o PostgreSQL). Confirma com `initdb --version`.
+- **Windows:** instala o PostgreSQL com o instalador da EDB e o PostGIS pelo Application Stack Builder, e acrescenta a pasta `bin` do PostgreSQL ao `PATH`. Usa o PowerShell.
+
+Se o repositório estiver numa pasta sincronizada (OneDrive, por exemplo no Skyloft), não deixes `aveiro-data` lá dentro: o PostgreSQL pode corromper-se. Cria a pasta num disco local e liga-a: `mkdir -p ~/aveiro-data && ln -s ~/aveiro-data aveiro-data`. Se o sistema de ficheiros não aceitar ligações simbólicas, clona o repositório fora do OneDrive.
+
+Da raiz do repositório, cria o cluster, arranca-o e prepara a base. A pasta `aveiro-data` é criada pelo `initdb`.
 
 ```sh
-psql -h 127.0.0.1 -U aveiro -d aveiro -f server/schema.sql
+initdb -D aveiro-data/postgres -U aveiro --auth=trust --no-locale -E UTF8
+pg_ctl -D aveiro-data/postgres -l aveiro-data/postgres.log -o "-p 5433 -c listen_addresses=127.0.0.1 -c unix_socket_directories=" start
+createdb -h 127.0.0.1 -p 5433 -U aveiro aveiro
+psql -h 127.0.0.1 -p 5433 -U aveiro -d aveiro -c "CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public"
+psql -h 127.0.0.1 -p 5433 -U aveiro -d aveiro -f server/schema.sql
 ```
 
-Se preferires Docker, o comando abaixo cria a base local com PostGIS. Escolhe uma palavra-passe e usa-a também em `DATABASE_URL`. Podes reutilizar um contentor existente com `docker start aveiro-postgis`.
+No `.env`:
+
+```
+DATABASE_URL=postgresql://aveiro@127.0.0.1:5433/aveiro
+```
+
+O cluster aceita ligações sem palavra-passe, mas só escuta em `127.0.0.1`. Serve para desenvolvimento, não para uma máquina exposta. A migração corre numa transação e pode ser executada de novo.
+
+#### Opção B: Docker
+
+O comando abaixo cria a base local com PostGIS. Escolhe uma palavra-passe e usa-a também em `DATABASE_URL`. Podes reutilizar um contentor existente com `docker start aveiro-postgis`.
 
 ```sh
 docker run --name aveiro-postgis -e POSTGRES_USER=aveiro -e POSTGRES_PASSWORD=CHANGE_ME -e POSTGRES_DB=aveiro -p 127.0.0.1:5432:5432 -v aveiro-pgdata:/var/lib/postgresql/data -d postgis/postgis:16-3.7
@@ -41,7 +86,27 @@ docker cp server/schema.sql aveiro-postgis:/tmp/schema.sql
 docker exec aveiro-postgis psql -U aveiro -d aveiro -f /tmp/schema.sql
 ```
 
+No `.env`:
+
+```
+DATABASE_URL=postgresql://aveiro:CHANGE_ME@127.0.0.1:5432/aveiro
+```
+
 A migração corre numa transação e pode ser executada de novo. Cria as tabelas no esquema `aveiro` e preserva os dados existentes. [Imagem Docker do PostGIS](https://github.com/postgis/docker-postgis)
+
+#### Opção C: PostgreSQL já instalado como serviço
+
+Cria a base `aveiro` com o utilizador `aveiro` como proprietário. Instala PostGIS na instância e, como administrador de PostgreSQL, ativa a extensão na base.
+
+```sql
+CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
+```
+
+Depois, aplica as migrações como proprietário da base, a partir da raiz do repositório, e define `DATABASE_URL` com a ligação a essa instância.
+
+```sh
+psql -h 127.0.0.1 -U aveiro -d aveiro -f server/schema.sql
+```
 
 ### 3. Configurar contas no Supabase
 
@@ -63,7 +128,7 @@ if (error) throw error
 
 Para executar o exemplo, guarda-o temporariamente em `web/dot/atribuir-tecnico.mjs` e, com as variáveis definidas no terminal, corre `node atribuir-tecnico.mjs` nessa pasta.
 
-### 4. Compilar e arrancar
+### 4. Compilar e arrancar pela primeira vez
 
 ```sh
 cd web/dot
@@ -73,25 +138,10 @@ cd ../..
 uv run --python .venv python -m server.app
 ```
 
-Abre [a aplicação local](http://localhost:8000/). O build fica em `web/dist` e o processo escuta em `127.0.0.1:8000` por omissão. Usa `--host` e `--port` para mudar o endereço. Para desenvolver o frontend, deixa o FastAPI a correr na porta 8000 e executa `npm run dev` em `web/dot` noutro terminal. Abre [o Vite](http://localhost:5173/). O proxy do Vite encaminha `/api` e `/img` para o FastAPI.
+Abre [a aplicação local](http://localhost:8000/). O build fica em `web/dist` e o processo escuta em `127.0.0.1:8000` por omissão. Usa `--host` e `--port` para mudar o endereço.
 
-A pasta de dados predefinida é `aveiro-data` na tua pasta pessoal. Tem `images/public` para imagens publicadas, `images/private` para pré-visualizações e `models` para modelos. Usa `--data-dir` ou altera `DATA_DIR` em `server/app/config.py` para escolher outra pasta. Em particular, se já tens imagens publicadas no Skyloft, aponta para a pasta que contém o diretório `images` existente. O servidor avisa se o caminho contiver OneDrive.
+A pasta de dados predefinida é `aveiro-data` na raiz do repositório e está no `.gitignore`. Tem `images/public` para imagens publicadas, `images/private` para pré-visualizações, `models` para modelos e, na opção A, `postgres` para a base de dados. Usa `--data-dir` ou altera `DATA_DIR` em `server/app/config.py` para escolher outra pasta. Em particular, se já tens imagens publicadas no Skyloft, aponta para a pasta que contém o diretório `images` existente. O servidor avisa se o caminho contiver OneDrive.
 
 O servidor avisa ao arrancar enquanto o desfoque for experimental. Usa imagens de demonstração sem rostos nem matrículas visíveis. Para arrancar num endereço que não seja loopback, define explicitamente `ALLOW_PLACEHOLDER_PUBLIC=1` no ambiente do terminal. Em PowerShell usa `$env:ALLOW_PLACEHOLDER_PUBLIC = '1'`. Em Linux usa `export ALLOW_PLACEHOLDER_PUBLIC=1`.
 
-## GitHub Pages e Caddy opcionais
-
-Para manter um frontend alojado noutra origem, define `apiBase` em `web/src/config.ts` como, por exemplo, `https://api.example.com/api` e permite a origem do frontend em `CORS_ORIGINS` de `server/app/config.py`. Em `web/dot`, `npm run deploy` continua a construir para o caminho do GitHub Pages e a publicar. Mantém o URL do Pages entre os redirects do Supabase se o usares.
-
-O [módulo NixOS](skyloft.nix) e o [Caddyfile](Caddyfile) continuam disponíveis para uma instalação com HTTPS. O módulo usa `/var/lib/aveiro-urban` como pasta de dados e lê `DATABASE_URL` do ficheiro de ambiente do serviço. O Caddy usa o domínio público e o diretório de imagens configurados. Enquanto o desfoque for experimental, limita o acesso público a imagens de demonstração.
-
-## Verificação
-
-- A pré-visualização privada expira ao fim de 30 minutos. Se faltarem metadados, indica latitude, longitude e direção em graus a partir do norte verdadeiro.
-- O desfoque atua na metade inferior e o detetor devolve três caixas fixas. Os modelos reais podem substituir `anonymize` e `detect` em `server/imaging.py`.
-- Os testes usam uma base PostGIS temporária e respostas simuladas do Supabase. Define `AVEIRO_TEST_DATABASE_URL` no terminal com uma ligação que possa criar bases e instalar PostGIS. Em PowerShell usa `$env:AVEIRO_TEST_DATABASE_URL = 'postgresql://...'`. Em Linux usa `export AVEIRO_TEST_DATABASE_URL='postgresql://...'`.
-
-```sh
-uv pip install --python .venv httpx
-uv run --python .venv python -m unittest discover -s server/tests -v
-```
+## GitHub

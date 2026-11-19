@@ -23,6 +23,8 @@
 
 Site available at: https://ricadinho.github.io/HackatonAveiro2026/
 
-## Inventário, API e Skyloft
+## Correr backend
 
-Segue o [guia do servidor](server/README.md#correr-localmente) para correr a aplicação no portátil ou no Skyloft. O FastAPI serve o frontend, a API e as imagens publicadas.
+   ```sh
+   uv run --python .venv python -m server.app
+   ```

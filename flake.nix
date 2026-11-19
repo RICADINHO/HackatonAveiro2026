@@ -28,6 +28,7 @@
           default = pkgs.mkShell {
             name = "edgerock-env";
             buildInputs = with pkgs; [
+              (postgresql.withPackages (ps: [ ps.postgis ]))
               # Python
               uv
               git
