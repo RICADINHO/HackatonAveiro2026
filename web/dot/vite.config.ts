@@ -4,7 +4,6 @@ import sitemap from 'vite-plugin-sitemap'
 
 // https://vite.dev/config/
 export default defineConfig({
-  envPrefix: ['VITE_', 'NEXT_PUBLIC_SUPABASE_'],
   plugins: [
     react(),
     sitemap({
