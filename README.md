@@ -1,5 +1,7 @@
 # HackatonAveiro2026
 
+![Showcase](showcase.png)
+
 ## Equipa Dot.
 
 - Alano Baptista
