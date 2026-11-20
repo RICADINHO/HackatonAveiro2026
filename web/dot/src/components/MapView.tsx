@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import { useTheme } from '../theme.tsx'
 import { classIcon } from '../constants.ts'
-import { MAP_ATTRIBUTION, MAP_TILES } from '../mapTiles.ts'
+import { MAP_ATTRIBUTION, MAP_MAX_NATIVE_ZOOM, MAP_TILES } from '../mapTiles.ts'
 import type { InventoryItem } from '../types.ts'
 
 const AVEIRO: [number, number] = [40.6405, -8.6538]
@@ -50,6 +50,7 @@ export function MapView({ items, selectedId, onSelect }: {
 
     const tiles = L.tileLayer(MAP_TILES[theme], {
       maxZoom: 20,
+      maxNativeZoom: MAP_MAX_NATIVE_ZOOM,
       attribution: MAP_ATTRIBUTION,
     }).addTo(map)
     tileRef.current = tiles

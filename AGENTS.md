@@ -282,6 +282,7 @@ Single-page app. No router: `App.tsx` owns view state and opens dialogs/drawers.
 
 - **Layout**: full-viewport Leaflet map under a glass app bar. Floating filter/search card on the left, account menu top-right, item details in a right slide-over drawer. Upload/auth/reports/images are modals. Toasts for feedback.
 - **Map** (`MapView.tsx`): Leaflet with CARTO tiles from `mapTiles.ts`; category-coloured markers with a class-specific icon; fit/fly to selection.
+- Both maps scale tiles above the provider's native zoom limit (18 for CARTO, 19 for OpenStreetMap) to avoid requesting unavailable tiles.
 - **Filter panel** (`FilterPanel.tsx`): category chips plus a scrollable "Tipos detetados" list that toggles individual `class_name` values, so subtypes such as bins and sign types can be shown or hidden independently.
 - **Location picker** (`LocationPicker.tsx`): reusable Leaflet map used for uploads and technician corrections. Click sets the camera point, a draggable arrow sets heading, a 65° FOV wedge visualizes the view. Also supports GPS and recentring. Heading is `[0, 360)`.
 - **Item drawer** (`ItemDrawer.tsx`): item metadata, image gallery/lightbox, uploader name, detections, and technician edit/move/delete controls.

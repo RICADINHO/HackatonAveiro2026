@@ -4,6 +4,9 @@ const CARTO_LIGHT = 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{
 const CARTO_DARK = 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
 const OSM = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 
+// CARTO raster tiles stop at zoom 18; OpenStreetMap tiles go through zoom 19.
+export const MAP_MAX_NATIVE_ZOOM = config.cartoApiKey ? 18 : 19
+
 function withKey(url: string): string {
   if (!config.cartoApiKey) return url
   return `${url}?key=${encodeURIComponent(config.cartoApiKey)}`

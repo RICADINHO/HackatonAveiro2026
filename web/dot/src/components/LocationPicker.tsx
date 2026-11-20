@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import L from 'leaflet'
 import { useTheme } from '../theme.tsx'
 import { compassPoint, formatHeading } from '../constants.ts'
-import { MAP_ATTRIBUTION, MAP_TILES } from '../mapTiles.ts'
+import { MAP_ATTRIBUTION, MAP_MAX_NATIVE_ZOOM, MAP_TILES } from '../mapTiles.ts'
 import type { CameraPoint } from '../types.ts'
 
 const AVEIRO: L.LatLngExpression = [40.6405, -8.6538]
@@ -137,6 +137,7 @@ export function LocationPicker({ value, onChange, height = 250, showHeading = tr
 
     const tiles = L.tileLayer(MAP_TILES[theme], {
       maxZoom: 20,
+      maxNativeZoom: MAP_MAX_NATIVE_ZOOM,
       attribution: MAP_ATTRIBUTION,
     }).addTo(map)
     tileRef.current = tiles
