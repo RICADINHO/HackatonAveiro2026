@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Ctrl+F Aveiro · Mobiliário urbano",
-  "short_name": "Ctrl+F Aveiro",
+  "name": "DotStreetMap",
+  "short_name": "DotStreetMap",
   "description": "Inventário do mobiliário urbano de Aveiro.",
   "start_url": "/",
   "scope": "/",

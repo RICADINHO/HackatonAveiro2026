@@ -55,7 +55,7 @@ export function Header({ account, email, openReports, onOpenAuth, onSignOut, onO
           <span className="brand-mark__lens" />
         </span>
         <span className="brand-text">
-          <strong>Ctrl+F Aveiro</strong>
+          <strong>DotStreetMap</strong>
           <small>Mobiliário urbano</small>
         </span>
       </div>
