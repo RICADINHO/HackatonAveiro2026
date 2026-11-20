@@ -40,6 +40,9 @@ O backend lê `DATABASE_URL` do `.env` da raiz.
 Instala os [modelos de anonimização](server/README.md#modelos-de-anonimização) na pasta de dados antes de testar o upload.
 
 ```sh
+# after a reboot
+pg_ctl -D aveiro-data/postgres -l aveiro-data/postgres.log \
+  -o "-p 5433 -c listen_addresses=127.0.0.1 -c unix_socket_directories=" start
 uv run --python .venv python -m server.app
 ```
 
