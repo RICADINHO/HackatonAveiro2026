@@ -153,7 +153,7 @@ A pasta de dados predefinida é `aveiro-data` na tua pasta pessoal. Tem `images/
 
 O servidor corre `yolo/detector_3classes.pt` antes da anonimização. Depois junta as caixas de rostos (limiar de 30%) e matrículas (25%), acrescenta margem e aplica desfoque gaussiano e pixelização nessas áreas. A pré-visualização guarda o JPEG processado sem EXIF. Se faltar um dos modelos ou a inferência falhar, o servidor devolve 503 sem criar a pré-visualização. Confirma visualmente o desfoque antes de publicar.
 
-Antes do desfoque, os classificadores em `yolo/` analisam cada recorte de um sinal ou de um contentor genérico. O servidor usa os subtipos de sinais reconhecidos pelo inventário a partir de 70% de confiança e os de contentores a partir de 95%. O YOLOE também pode reconhecer diretamente o conjunto azul, verde e amarelo de uma ilha de reciclagem. Os outros resultados mantêm o rótulo genérico.
+Antes do desfoque, os classificadores em `yolo/` analisam cada recorte de um sinal ou de um contentor genérico. O recorte cresce 10% em cada lado e é enviado em lote para `classifier_sinais.pt` (128 px) ou `classifier_lixos.pt` (224 px). O servidor escolhe o subtipo suportado mais confiável entre as cinco melhores classes do classificador e usa os subtipos de sinais e de contentores a partir de 70% de confiança. O YOLOE também pode reconhecer diretamente o conjunto azul, verde e amarelo de uma ilha de reciclagem. Os outros resultados mantêm o rótulo genérico. O painel de filtros mostra os tipos detetados e permite mostrar ou esconder cada um.
 
 ### Carregar um vídeo
 

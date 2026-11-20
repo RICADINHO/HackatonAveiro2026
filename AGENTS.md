@@ -250,6 +250,7 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 
 - `projection(heading, bbox)` estimates distance/bearing from the normalized detection box (horizontal offset → bearing, box size/vertical position → distance). It is a **best guess**, not calibrated.
 - `detect()` runs `yolo/detector_3classes.pt` in CPU mode before redaction and checks overlapping tiles for small signs and bins. With `yoloe-26s-seg.pt` in `<data-dir>/models`, it adds a full-image YOLOE pass using the bundled prompt embeddings. The detector normalizes the boxes and suppresses duplicates within each category.
+- `classify_detections()` then runs the subtype cascade. Each generic `sinal-transito` or `contentor-lixo` box is cropped with a 10% margin and batched through `classifier_sinais.pt` (128 px) or `classifier_lixos.pt` (224 px). It keeps the best supported subtype among the top five classes above the per-model confidence threshold, and otherwise leaves the generic label. `SIGN_SUBTYPES` and `WASTE_SUBTYPES` are the single source of truth for the emitted `class_name`/`label` pairs.
 - `anonymization.anonymize()` runs RetinaFace ResNet34 (0.30) and YOLOv9-S 608 (0.25) via ONNX Runtime. It combines boxes from both, pads them, and applies Gaussian blur and pixelation. Anonymization failures return 503 and leave no staged preview.
 
 `server/inventory.py`:
@@ -275,7 +276,8 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 Single-page app. No router: `App.tsx` owns view state and opens dialogs/drawers.
 
 - **Layout**: full-viewport Leaflet map under a glass app bar. Floating filter/search card on the left, account menu top-right, item details in a right slide-over drawer. Upload/auth/reports/images are modals. Toasts for feedback.
-- **Map** (`MapView.tsx`): Leaflet with CARTO tiles from `mapTiles.ts`; category-coloured markers; fit/fly to selection.
+- **Map** (`MapView.tsx`): Leaflet with CARTO tiles from `mapTiles.ts`; category-coloured markers with a class-specific icon; fit/fly to selection.
+- **Filter panel** (`FilterPanel.tsx`): category chips plus a scrollable "Tipos detetados" list that toggles individual `class_name` values, so subtypes such as bins and sign types can be shown or hidden independently.
 - **Location picker** (`LocationPicker.tsx`): reusable Leaflet map used for uploads and technician corrections. Click sets the camera point, a draggable arrow sets heading, a 65° FOV wedge visualizes the view. Also supports GPS and recentring. Heading is `[0, 360)`.
 - **Item drawer** (`ItemDrawer.tsx`): item metadata, image gallery/lightbox, uploader name, detections, and technician edit/move/delete controls.
 - **Upload** (`UploadDialog.tsx`): uses `/previews` for images or `/video-previews` for videos. Users can select and publish individual video frames. Location and heading are mandatory for each publication.
@@ -288,7 +290,7 @@ Single-page app. No router: `App.tsx` owns view state and opens dialogs/drawers.
 - TypeScript is strict about unused code: `noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax`, `erasableSyntaxOnly`. Use `import type { … }` for types.
 - Relative imports include the extension: `./types.ts`, `../theme.tsx`.
 - Config comes from `web/src/config.ts` via `../../src/config.ts`; do not read `import.meta.env` directly elsewhere.
-- Category/class/label mapping lives in `constants.ts`. Add new classes to `CLASS_CATEGORY` and `CLASS_LABELS` there, and keep the backend `Category` literal (`sinalizacao`, `iluminacao`, `residuos`) in sync.
+- Category/class/label mapping lives in `constants.ts`. Add sign classes to `SIGN_LABELS`, bin classes to `WASTE_LABELS`, and a marker icon to `CLASS_ICONS`; `CLASS_CATEGORY` and `CLASS_LABELS` are derived from those lists. Keep the backend `Category` literal (`sinalizacao`, `iluminacao`, `residuos`) in sync.
 - Styling is plain CSS with custom properties in `index.css` (`--cat-sign`, `--cat-light`, `--cat-bin`, theme tokens). Bootstrap CSS is **not** imported; only `bootstrap-icons` is. Do not reintroduce Bootstrap/AOS/GLightbox/Swiper.
 - Keep the Portuguese copy and the existing visual language (rounded cards, glass surfaces, category colours).
 - Lint is `oxlint`. `set-state-in-effect` and `only-export-components` warnings are expected in a few places; don't add new errors.

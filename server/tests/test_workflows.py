@@ -174,15 +174,17 @@ class Classification(unittest.TestCase):
         waste_bin = Detection('residuos', 'contentor-lixo', 'Contentor de lixo', 0.7, bbox)
         recycling_island = Detection('residuos', 'ilha-reciclagem', 'Ilha de reciclagem', 0.86, bbox)
 
-        def prediction(class_name, confidence):
-            return Mock(names={0: class_name}, probs=Mock(top1=0, top1conf=confidence))
+        def prediction(*classes):
+            names = {index: name for index, (name, _) in enumerate(classes)}
+            confidences = Mock(tolist=Mock(return_value=[confidence for _, confidence in classes]))
+            return Mock(names=names, probs=Mock(top5=list(names), top5conf=confidences))
 
         signs = Mock()
-        signs.predict.return_value = [prediction('eu_dfg_regulatory_stop', 0.98),
-                                      prediction('collect_organize_images', 0.99)]
+        signs.predict.return_value = [prediction(('eu_dfg_regulatory_stop', 0.98)),
+                                      prediction(('collect_organize_images', 0.99))]
         bins = Mock()
-        bins.predict.return_value = [prediction('indiferenciado', 0.99),
-                                     prediction('indiferenciado', 0.88)]
+        bins.predict.return_value = [prediction(('indiferenciado', 0.99)),
+                                     prediction(('indiferenciado', 0.60))]
         models = {'classifier_sinais.pt': signs, 'classifier_lixos.pt': bins}
         with patch('server.imaging._load_classifier', side_effect=models.__getitem__):
             result = classify_detections(image, [traffic_sign, traffic_sign, waste_bin, waste_bin, recycling_island])
@@ -191,8 +193,24 @@ class Classification(unittest.TestCase):
         ])
         self.assertTrue(all(d.bbox == bbox for d in result))
         self.assertEqual(result[0].confidence, traffic_sign.confidence)
-        self.assertEqual([crop.size for crop in signs.predict.call_args.args[0]], [(30, 40), (30, 40)])
+        # The crop grows by 10% on each side: 30x40 becomes 36x48.
+        self.assertEqual([crop.size for crop in signs.predict.call_args.args[0]], [(36, 48), (36, 48)])
+        self.assertEqual(signs.predict.call_args.kwargs['imgsz'], 128)
         self.assertEqual(len(bins.predict.call_args.args[0]), 2)
+        self.assertEqual(bins.predict.call_args.kwargs['imgsz'], 224)
+
+    def test_uses_the_best_supported_subtype_from_the_top_five(self):
+        image = Image.new('RGB', (100, 80))
+        bbox = (0.2, 0.25, 0.3, 0.5)
+        sign = Detection('sinalizacao', 'sinal-transito', 'Sinal de trânsito', 0.8, bbox)
+        confidences = Mock(tolist=Mock(return_value=[0.72, 0.70, 0.05]))
+        result = Mock(names={0: 'unknown_sign', 1: 'speed_limit_50', 2: 'speed_limit_30'},
+                      probs=Mock(top5=[0, 1, 2], top5conf=confidences))
+        with patch('server.imaging._load_classifier',
+                   return_value=Mock(predict=Mock(return_value=[result]))):
+            classified, = classify_detections(image, [sign])
+        self.assertEqual(classified.class_name, 'velocidade-50')
+        self.assertEqual(classified.label, 'Limite de 50 km/h')
 
 
 class ImageAnonymization(unittest.TestCase):

@@ -1,17 +1,16 @@
 import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import { useTheme } from '../theme.tsx'
-import { CATEGORY_META } from '../constants.ts'
+import { classIcon } from '../constants.ts'
 import { MAP_ATTRIBUTION, MAP_TILES } from '../mapTiles.ts'
 import type { InventoryItem } from '../types.ts'
 
 const AVEIRO: [number, number] = [40.6405, -8.6538]
 
 function itemIcon(item: InventoryItem, selected: boolean) {
-  const meta = CATEGORY_META[item.category]
   return L.divIcon({
     className: `map-pin map-pin--${item.category}${selected ? ' is-selected' : ''}`,
-    html: `<span class="map-pin__dot"><i class="bi ${meta.icon}" aria-hidden="true"></i></span>`,
+    html: `<span class="map-pin__dot"><i class="bi ${classIcon(item.class_name, item.category)}" aria-hidden="true"></i></span>`,
     iconSize: [36, 36],
     iconAnchor: [18, 18],
     tooltipAnchor: [0, -18],

@@ -1,12 +1,40 @@
 import { useState } from 'react'
-import { CATEGORY_META, CATEGORY_ORDER } from '../constants.ts'
+import { CATEGORY_META, CATEGORY_ORDER, classIcon } from '../constants.ts'
 import type { InventoryCategory, InventoryItem } from '../types.ts'
 
-export function FilterPanel({ items, visibleCount, filters, onToggleCategory, search, onSearch, onOpenUpload, onShowAll }: {
+interface TypeEntry {
+  className: string
+  label: string
+  category: InventoryCategory
+  count: number
+}
+
+function typeEntries(items: InventoryItem[]): TypeEntry[] {
+  const entries = new Map<string, TypeEntry>()
+  for (const item of items) {
+    const existing = entries.get(item.class_name)
+    if (existing) existing.count += 1
+    else entries.set(item.class_name, {
+      className: item.class_name,
+      label: item.label,
+      category: item.category,
+      count: 1,
+    })
+  }
+  return [...entries.values()].sort((left, right) => (
+    CATEGORY_ORDER.indexOf(left.category) - CATEGORY_ORDER.indexOf(right.category)
+    || left.label.localeCompare(right.label, 'pt')
+  ))
+}
+
+export function FilterPanel({ items, visibleCount, filters, onToggleCategory, hiddenClasses, onToggleClass,
+  search, onSearch, onOpenUpload, onShowAll }: {
   items: InventoryItem[]
   visibleCount: number
   filters: Set<InventoryCategory>
   onToggleCategory: (category: InventoryCategory) => void
+  hiddenClasses: Set<string>
+  onToggleClass: (className: string) => void
   search: string
   onSearch: (value: string) => void
   onOpenUpload: () => void
@@ -17,6 +45,7 @@ export function FilterPanel({ items, visibleCount, filters, onToggleCategory, se
     category,
     items.filter((item) => item.category === category).length,
   ])) as Record<InventoryCategory, number>
+  const types = typeEntries(items)
 
   return (
     <aside className={`filter-panel${collapsed ? ' is-collapsed' : ''}`} aria-label="Filtros do mapa">
@@ -79,8 +108,38 @@ export function FilterPanel({ items, visibleCount, filters, onToggleCategory, se
             })}
           </div>
 
+          {types.length > 1 && (
+            <div className="type-filter">
+              <div className="type-filter__head">
+                <span>Tipos detetados</span>
+                <span className="type-filter__hint">clica para mostrar ou esconder</span>
+              </div>
+              <div className="type-filter__list" role="group" aria-label="Tipos de mobiliário">
+                {types.map((type) => {
+                  const active = !hiddenClasses.has(type.className)
+                  return (
+                    <button
+                      key={type.className}
+                      type="button"
+                      className={`type-chip type-chip--${type.category}${active ? ' is-active' : ''}`}
+                      aria-pressed={active}
+                      title={`${type.label} · ${type.count}`}
+                      onClick={() => onToggleClass(type.className)}
+                    >
+                      <span className="type-chip__icon">
+                        <i className={`bi ${classIcon(type.className, type.category)}`} aria-hidden="true" />
+                      </span>
+                      <span className="type-chip__label">{type.label}</span>
+                      <span className="type-chip__count">{type.count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="filter-panel__foot">
-            {filters.size < CATEGORY_ORDER.length && (
+            {(filters.size < CATEGORY_ORDER.length || hiddenClasses.size > 0) && (
               <button type="button" className="btn btn-ghost btn-sm" onClick={onShowAll}>
                 <i className="bi bi-arrow-counterclockwise" aria-hidden="true" /> Mostrar tudo
               </button>

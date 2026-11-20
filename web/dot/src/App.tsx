@@ -22,6 +22,7 @@ function AppShell() {
   const [mapLoading, setMapLoading] = useState(true)
   const [mapError, setMapError] = useState('')
   const [filters, setFilters] = useState<Set<InventoryCategory>>(() => new Set(CATEGORY_ORDER))
+  const [hiddenClasses, setHiddenClasses] = useState<Set<string>>(() => new Set())
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -135,10 +136,11 @@ function AppShell() {
     const term = search.trim().toLocaleLowerCase('pt')
     return items.filter((entry) => {
       if (!filters.has(entry.category)) return false
+      if (hiddenClasses.has(entry.class_name)) return false
       if (!term) return true
       return `${entry.label} ${entry.class_name}`.toLocaleLowerCase('pt').includes(term)
     })
-  }, [items, filters, search])
+  }, [items, filters, hiddenClasses, search])
 
   const selectItem = useCallback((id: string) => {
     setSelectedId(id)
@@ -159,8 +161,18 @@ function AppShell() {
     })
   }, [])
 
+  const toggleClass = useCallback((className: string) => {
+    setHiddenClasses((current) => {
+      const next = new Set(current)
+      if (next.has(className)) next.delete(className)
+      else next.add(className)
+      return next
+    })
+  }, [])
+
   const showAll = useCallback(() => {
     setFilters(new Set(CATEGORY_ORDER))
+    setHiddenClasses(new Set())
     setSearch('')
   }, [])
 
@@ -241,6 +253,8 @@ function AppShell() {
           visibleCount={visibleItems.length}
           filters={filters}
           onToggleCategory={toggleCategory}
+          hiddenClasses={hiddenClasses}
+          onToggleClass={toggleClass}
           search={search}
           onSearch={setSearch}
           onOpenUpload={requestUpload}

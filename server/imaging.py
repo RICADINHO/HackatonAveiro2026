@@ -38,21 +38,118 @@ YOLOE_CLASSES = {
     'blue green and yellow recycling containers': RECYCLING_ISLAND,
 }
 SIGN_SUBTYPES = {
-    'stop': ('stop', 'Sinal de STOP'),
-    'eu_dfg_regulatory_stop': ('stop', 'Sinal de STOP'),
-    'crosswalk': ('passadeira', 'Passagem para peões'),
-    'give_way': ('cedencia', 'Cedência de passagem'),
-    'eu_dfg_regulatory_yield': ('cedencia', 'Cedência de passagem'),
-    'no_entry': ('sentido-proibido', 'Sentido proibido'),
-    'eu_dfg_regulatory_no_entry': ('sentido-proibido', 'Sentido proibido'),
-    'parking': ('estacionamento', 'Estacionamento'),
-    'eu_dfg_information_parking': ('estacionamento', 'Estacionamento'),
+    # Regulatory signs
+    **dict.fromkeys(('stop', 'eu_dfg_regulatory_stop'), ('stop', 'Sinal de STOP')),
+    **dict.fromkeys(('give_way', 'eu_dfg_regulatory_yield',
+                     'eu_dfg_regulatory_yield_to_oncoming_traffic'), ('cedencia', 'Cedência de passagem')),
+    **dict.fromkeys(('no_entry', 'eu_dfg_regulatory_no_entry'), ('sentido-proibido', 'Sentido proibido')),
+    **dict.fromkeys(('parking', 'eu_dfg_information_parking'), ('estacionamento', 'Estacionamento')),
     'eu_dfg_regulatory_no_parking': ('estacionamento-proibido', 'Estacionamento proibido'),
-    'roundabout_mandatory': ('rotunda', 'Rotunda'),
-    'eu_dfg_regulatory_roundabout': ('rotunda', 'Rotunda'),
-    'road_work': ('obras', 'Trabalhos na via'),
-    'eu_dfg_warning_roadworks': ('obras', 'Trabalhos na via'),
+    **dict.fromkeys(('roundabout_mandatory', 'eu_dfg_regulatory_roundabout'),
+                    ('rotunda', 'Rotunda')),
+    **dict.fromkeys(('ahead_only', 'go_straight', 'eu_dfg_regulatory_go_straight',
+                     'ileri_mecburi_yon'), ('sentido-obrigatorio', 'Sentido obrigatório')),
+    **dict.fromkeys(('turn_left_ahead', 'eu_dfg_regulatory_turn_left'),
+                    ('virar-esquerda', 'Virar à esquerda')),
+    **dict.fromkeys(('turn_right_ahead', 'eu_dfg_regulatory_turn_right'),
+                    ('virar-direita', 'Virar à direita')),
+    **dict.fromkeys(('go_straight_or_left', 'eu_dfg_regulatory_go_straight_or_turn_left'),
+                    ('seguir-esquerda', 'Em frente ou à esquerda')),
+    **dict.fromkeys(('go_straight_or_right', 'eu_dfg_regulatory_go_straight_or_turn_right'),
+                    ('seguir-direita', 'Em frente ou à direita')),
+    **dict.fromkeys(('keep_left', 'eu_dfg_regulatory_keep_left'), ('manter-esquerda', 'Manter à esquerda')),
+    **dict.fromkeys(('keep_right', 'eu_dfg_regulatory_keep_right'), ('manter-direita', 'Manter à direita')),
+    **dict.fromkeys(('no_passing', 'eu_dfg_regulatory_no_overtaking'),
+                    ('proibido-ultrapassar', 'Proibido ultrapassar')),
+    'no_passing_trucks': ('proibido-ultrapassar-pesados', 'Proibido ultrapassar a pesados'),
+    **dict.fromkeys(('no_trucks', 'no_heavy_goods_vehicles', 'eu_dfg_regulatory_no_goods_vehicles',
+                     'eu_dfg_regulatory_no_goods_vehicles_exceeding_limit',
+                     'eu_dfg_regulatory_no_heavy_goods_vehicles'),
+                    ('proibido-pesados', 'Proibido a veículos pesados')),
+    **dict.fromkeys(('no_vehicles', 'eu_dfg_regulatory_no_motor_vehicles'),
+                    ('proibido-veiculos', 'Proibido a veículos motorizados')),
+    'eu_dfg_regulatory_no_buses': ('proibido-autocarros', 'Proibido a autocarros'),
+    **dict.fromkeys(('no_bicycles', 'eu_dfg_regulatory_no_bicycles'),
+                    ('proibido-bicicletas', 'Proibido a bicicletas')),
+    **dict.fromkeys(('no_pedestrians', 'eu_dfg_regulatory_no_pedestrians'),
+                    ('proibido-peoes', 'Proibido a peões')),
+    **dict.fromkeys(('bicycles_only', 'eu_dfg_regulatory_bicycles_only'),
+                    ('pista-ciclista', 'Pista para bicicletas')),
+    **dict.fromkeys(('pedestrians', 'eu_dfg_regulatory_pedestrians_only'),
+                    ('zona-peoes', 'Zona de peões')),
+    **dict.fromkeys(('shared_path', 'eu_dfg_regulatory_shared_path_pedestrians_and_bicycles'),
+                    ('via-partilhada', 'Via partilhada com bicicletas')),
+    **dict.fromkeys(('no_u_turn', 'eu_dfg_regulatory_no_u_turn'),
+                    ('proibido-inverter', 'Proibida a inversão de marcha')),
+    **dict.fromkeys(('no_left_turn', 'eu_dfg_regulatory_no_left_turn'),
+                    ('proibido-virar-esquerda', 'Proibido virar à esquerda')),
+    **dict.fromkeys(('no_right_turn', 'eu_dfg_regulatory_no_right_turn'),
+                    ('proibido-virar-direita', 'Proibido virar à direita')),
+    'eu_dfg_regulatory_height_limit': ('limite-altura', 'Limite de altura'),
+    'eu_dfg_regulatory_weight_limit': ('limite-peso', 'Limite de peso'),
+    'eu_dfg_regulatory_axel_mass_limit': ('limite-peso-eixo', 'Limite de peso por eixo'),
+    'end_all_restrictions': ('fim-restricoes', 'Fim de todas as restrições'),
+    'end_no_passing': ('fim-proibicao-ultrapassar', 'Fim da proibição de ultrapassar'),
+    'end_no_passing_trucks': ('fim-proibicao-ultrapassar-pesados',
+                              'Fim da proibição de ultrapassar a pesados'),
+    'end_speed_limit_80': ('fim-velocidade-80', 'Fim do limite de 80 km/h'),
+    # Warning signs
+    **dict.fromkeys(('crosswalk', 'eu_dfg_warning_pedestrians_crossing'),
+                    ('passadeira', 'Passagem para peões')),
+    **dict.fromkeys(('road_work', 'eu_dfg_warning_roadworks'), ('obras', 'Trabalhos na via')),
+    **dict.fromkeys(('traffic_signals', 'traffic_signals_ahead', 'eu_dfg_warning_traffic_signals'),
+                    ('semaforos', 'Sinalização luminosa')),
+    **dict.fromkeys(('children_crossing', 'eu_dfg_warning_children'),
+                    ('criancas', 'Passagem de crianças')),
+    **dict.fromkeys(('bicycles_crossing', 'eu_dfg_warning_bicycles_crossing'),
+                    ('passagem-ciclistas', 'Passagem de ciclistas')),
+    **dict.fromkeys(('slippery_road', 'eu_dfg_warning_slippery_road_surface'),
+                    ('piso-escorregadio', 'Piso escorregadio')),
+    **dict.fromkeys(('road_narrows_right', 'eu_dfg_warning_road_narrows_right'),
+                    ('estreitamento-direita', 'Estreitamento à direita')),
+    **dict.fromkeys(('road_narrows_left', 'eu_dfg_warning_road_narrows_left'),
+                    ('estreitamento-esquerda', 'Estreitamento à esquerda')),
+    'eu_dfg_warning_road_narrows': ('estreitamento', 'Estreitamento da via'),
+    **dict.fromkeys(('priority_road', 'priority'), ('prioridade', 'Estrada com prioridade')),
+    **dict.fromkeys(('priority_next_intersection', 'eu_dfg_warning_crossroads'),
+                    ('cruzamento', 'Cruzamento')),
+    **dict.fromkeys(('general_caution', 'eu_dfg_warning_other_danger'),
+                    ('perigo', 'Outro perigo')),
+    **dict.fromkeys(('wild_animals', 'eu_dfg_warning_wild_animals'),
+                    ('animais-selvagens', 'Animais selvagens')),
+    **dict.fromkeys(('domestic_animals', 'eu_dfg_warning_domestic_animals'),
+                    ('animais', 'Animais domésticos')),
+    **dict.fromkeys(('eu_dfg_warning_falling_rocks_or_debris_left',
+                     'eu_dfg_warning_falling_rocks_or_debris_right'),
+                    ('pedras', 'Pedras na via')),
+    **dict.fromkeys(('road_bump', 'eu_dfg_warning_road_bump'), ('lomba', 'Lomba')),
+    **dict.fromkeys(('road_dip', 'eu_dfg_warning_road_dip'), ('depressao', 'Depressão na via')),
+    **dict.fromkeys(('uneven_road', 'eu_dfg_warning_uneven_road'),
+                    ('piso-irregular', 'Piso irregular')),
+    'ice_snow': ('gelo', 'Gelo ou neve'),
+    **dict.fromkeys(('eu_dfg_warning_road_slope_left', 'eu_dfg_warning_road_slope_right'),
+                    ('inclinacao', 'Inclinação da via')),
+    **dict.fromkeys(('dangerous_curve_left', 'eu_dfg_warning_curve_left'),
+                    ('curva-esquerda', 'Curva perigosa à esquerda')),
+    **dict.fromkeys(('dangerous_curve_right', 'eu_dfg_warning_curve_right'),
+                    ('curva-direita', 'Curva perigosa à direita')),
+    **dict.fromkeys(('double_curve', 'eu_dfg_warning_double_curve_first_left',
+                     'eu_dfg_warning_double_curve_first_right'),
+                    ('curva-dupla', 'Curva dupla')),
+    **dict.fromkeys(('eu_dfg_warning_traffic_merges_left', 'eu_dfg_warning_traffic_merges_right'),
+                    ('convergencia', 'Convergência de trânsito')),
+    **dict.fromkeys(('eu_dfg_warning_railroad_crossing_with_barriers',
+                     'eu_dfg_warning_railroad_crossing_without_barriers'),
+                    ('passagem-nivel', 'Passagem de nível')),
+    # Information signs
+    'eu_dfg_information_hospital': ('hospital', 'Hospital'),
+    'eu_dfg_information_gas_station': ('posto-combustivel', 'Posto de combustível'),
+    'eu_dfg_information_motorway': ('autoestrada', 'Autoestrada'),
+    'eu_dfg_information_tram_bus_stop': ('paragem-transporte', 'Paragem de transporte'),
+    'eu_dfg_information_disabled_persons': ('mobilidade-reduzida', 'Mobilidade reduzida'),
+    # Speed limits
     'hiz_siniri_50': ('velocidade-50', 'Limite de 50 km/h'),
+    'eu_dfg_regulatory_maximum_speed_limit': ('limite-velocidade', 'Limite de velocidade'),
     **{f'speed_limit_{speed}': (f'velocidade-{speed}', f'Limite de {speed} km/h')
        for speed in (20, 30, 50, 60, 70, 80, 100, 120)},
 }
@@ -61,10 +158,13 @@ WASTE_SUBTYPES = {
     'indiferenciado': ('indiferenciado', 'Contentor de indiferenciados'),
     'subterraneo': ('subterraneo', 'Contentor subterrâneo'),
 }
+# Generic detection class -> (classifier weights, input size, minimum confidence, subtype map).
 CLASSIFIERS = {
-    'sinal-transito': ('classifier_sinais.pt', 0.70, SIGN_SUBTYPES),
-    'contentor-lixo': ('classifier_lixos.pt', 0.95, WASTE_SUBTYPES),
+    'sinal-transito': ('classifier_sinais.pt', 128, 0.70, SIGN_SUBTYPES),
+    'contentor-lixo': ('classifier_lixos.pt', 224, 0.70, WASTE_SUBTYPES),
 }
+CLASSIFIER_PADDING = 0.10
+CLASSIFIER_BATCH = 16
 _detector_lock = Lock()
 
 
@@ -188,21 +288,39 @@ def detect(image: Image.Image, models_dir: Path | None = None) -> list[Detection
     return detections
 
 
+def _classifier_crop(image: Image.Image, bbox):
+    """Crop a detection with a 10% margin so the classifier sees the whole object."""
+    x, y, width, height = bbox
+    left = max(0, round((x - width * CLASSIFIER_PADDING) * image.width))
+    top = max(0, round((y - height * CLASSIFIER_PADDING) * image.height))
+    right = min(image.width, round((x + width * (1 + CLASSIFIER_PADDING)) * image.width))
+    bottom = min(image.height, round((y + height * (1 + CLASSIFIER_PADDING)) * image.height))
+    if right <= left or bottom <= top:
+        return None
+    return image.crop((left, top, right, bottom))
+
+
+def _best_subtype(result, subtypes, threshold):
+    """Pick the most confident supported subtype, skipping unrelated classifier classes."""
+    for class_id, confidence in zip(result.probs.top5, result.probs.top5conf.tolist(), strict=True):
+        subtype = subtypes.get(result.names[int(class_id)])
+        if subtype and confidence >= threshold:
+            return subtype
+    return None
+
+
 def classify_detections(image: Image.Image, detections: list[Detection]) -> list[Detection]:
     classified = detections.copy()
-    for generic, (filename, threshold, subtypes) in CLASSIFIERS.items():
+    for generic, (filename, input_size, threshold, subtypes) in CLASSIFIERS.items():
         indexes = []
         crops = []
         for index, detection in enumerate(detections):
             if detection.class_name != generic:
                 continue
-            x, y, width, height = detection.bbox
-            left, top = max(0, round(x * image.width)), max(0, round(y * image.height))
-            right = min(image.width, round((x + width) * image.width))
-            bottom = min(image.height, round((y + height) * image.height))
-            if right > left and bottom > top:
+            crop = _classifier_crop(image, detection.bbox)
+            if crop is not None:
                 indexes.append(index)
-                crops.append(image.crop((left, top, right, bottom)))
+                crops.append(crop)
 
         if not crops:
             continue
@@ -210,15 +328,16 @@ def classify_detections(image: Image.Image, detections: list[Detection]) -> list
             with _detector_lock:
                 model = _load_classifier(filename)
                 results = []
-                for start in range(0, len(crops), 16):
-                    results.extend(model.predict(crops[start:start + 16], device='cpu', verbose=False, save=False))
+                for start in range(0, len(crops), CLASSIFIER_BATCH):
+                    results.extend(model.predict(crops[start:start + CLASSIFIER_BATCH], imgsz=input_size,
+                                                 device='cpu', verbose=False, save=False))
         except Exception:
             logger.exception('Falhou a classificação com %s', filename)
             continue
 
         for index, result in zip(indexes, results, strict=True):
-            subtype = subtypes.get(result.names[result.probs.top1])
-            if subtype and float(result.probs.top1conf) >= threshold:
+            subtype = _best_subtype(result, subtypes, threshold)
+            if subtype:
                 class_name, label = subtype
                 classified[index] = replace(detections[index], class_name=class_name, label=label)
     return classified
