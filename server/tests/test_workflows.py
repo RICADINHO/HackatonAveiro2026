@@ -1,7 +1,8 @@
+import csv
 import os
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -336,6 +337,11 @@ class InventoryWorkflow(unittest.TestCase):
                     self.assertEqual(client.get(missing).status_code, 404, missing)
                 self.assertTrue((root / 'models').is_dir())
                 self.assertEqual(client.get('/api/items').json(), [])
+                self.assertEqual(client.get('/api/items/export.csv').status_code, 401)
+                self.assertEqual(client.get('/api/items/export.csv', headers=auth('member')).status_code, 403)
+                empty_csv = client.get('/api/items/export.csv', headers=auth('tech'))
+                self.assertEqual(empty_csv.status_code, 200)
+                self.assertEqual(list(csv.DictReader(StringIO(empty_csv.content.decode('utf-8-sig')))), [])
                 self.assertEqual(client.get('/items').json(), [])
                 cors = client.get('/items', headers={'Origin': 'https://ricadinho.github.io'})
                 self.assertEqual(cors.headers['access-control-allow-origin'], 'https://ricadinho.github.io')
@@ -407,7 +413,7 @@ class InventoryWorkflow(unittest.TestCase):
                 estimated = [image['detections'][0]['latitude'] for image in details['images']]
                 self.assertAlmostEqual(sum(estimated) / 2, details['latitude'], places=10)
 
-                update = {'label': 'STOP corrigido', 'latitude': 40.6407, 'longitude': -8.6538}
+                update = {'label': 'STOP, posição corrigida', 'latitude': 40.6407, 'longitude': -8.6538}
                 self.assertEqual(client.patch(stop_path, json=update).status_code, 401)
                 self.assertEqual(client.patch(stop_path, headers=auth('member'), json=update).status_code, 403)
                 self.assertEqual(client.delete(stop_path, headers=auth('member')).status_code, 403)
@@ -420,6 +426,25 @@ class InventoryWorkflow(unittest.TestCase):
                 self.assertTrue(corrected['position_manually_corrected'])
                 self.assertAlmostEqual(corrected['latitude'], update['latitude'], places=10)
                 self.assertEqual(corrected['label'], update['label'])
+
+                export = client.get('/api/items/export.csv?category=residuos', headers=auth('tech'))
+                self.assertEqual(export.status_code, 200)
+                self.assertEqual(export.headers['content-type'], 'text/csv; charset=utf-8')
+                self.assertIn('inventario-aveiro.csv', export.headers['content-disposition'])
+                exported = list(csv.DictReader(StringIO(export.content.decode('utf-8-sig'))))
+                self.assertEqual(len(exported), 3)
+                row, = [row for row in exported if row['id'] == stop['id']]
+                self.assertEqual(row['nome'], update['label'])
+                self.assertEqual(row['classe'], 'stop')
+                self.assertEqual(float(row['latitude']), update['latitude'])
+                self.assertEqual(float(row['longitude']), update['longitude'])
+                self.assertEqual(row['posicao_corrigida'], 'sim')
+
+                self.assertEqual(client.patch(stop_path, headers=auth('tech'), json={'label': '=1+1'}).status_code, 204)
+                export = client.get('/api/items/export.csv', headers=auth('tech'))
+                rows = csv.DictReader(StringIO(export.content.decode('utf-8-sig')))
+                row, = [row for row in rows if row['id'] == stop['id']]
+                self.assertEqual(row['nome'], "'=1+1")
 
                 report = client.post('/reports', headers=auth('member'),
                                      json={'description': 'Má deteção', 'item_id': stop['id']})

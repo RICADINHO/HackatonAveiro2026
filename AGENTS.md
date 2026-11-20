@@ -216,6 +216,7 @@ Entry point: `server/app/__main__.py` → `Settings.from_env()` → `create_app(
 |---|---|---|---|
 | GET | `/me` | user | Current account (`id`, `public_name`, `role`) |
 | GET | `/items` | public | List items; filters `?category=` and `?class_name=` (repeatable) |
+| GET | `/items/export.csv` | technician | Download the complete inventory as UTF-8 CSV |
 | GET | `/items/{id}` | public | Item detail with its images and detections |
 | GET | `/images` | technician | All published images |
 | POST | `/previews` | user | Detect furniture, anonymize, and return `{id, camera, detections}` |

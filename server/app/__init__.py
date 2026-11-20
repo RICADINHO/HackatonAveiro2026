@@ -1,8 +1,10 @@
 import asyncio
+import csv
 import logging
 import os
 from contextlib import ExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
@@ -71,6 +73,13 @@ def remove_file(path: Path):
         path.unlink(missing_ok=True)
     except OSError:
         logger.exception('Could not remove %s', path)
+
+
+def csv_text(value: str) -> str:
+    # Inventory labels can be edited by users. Open formula-like values as text.
+    if value.startswith(('\t', '\r', '\n')) or value.lstrip().startswith(('=', '+', '-', '@', '＝', '＋', '－', '＠')):
+        return "'" + value
+    return value
 
 
 @contextmanager
@@ -186,6 +195,21 @@ def create_app(settings: Settings):
               class_name: Annotated[list[str] | None, Query()] = None):
         with pool.connection() as db:
             return inventory.list_items(db, category, class_name)
+
+    @api.get('/items/export.csv')
+    def export_inventory(_user: Annotated[Principal, Depends(technician)]):
+        with pool.connection() as db:
+            rows = inventory.list_items(db, None, None)
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(('id', 'categoria', 'classe', 'nome', 'latitude', 'longitude', 'posicao_corrigida'))
+        for row in rows:
+            writer.writerow((row['id'], csv_text(row['category']), csv_text(row['class_name']), csv_text(row['label']),
+                             row['latitude'], row['longitude'], 'sim' if row['position_manually_corrected'] else 'não'))
+        return Response(output.getvalue().encode('utf-8-sig'), media_type='text/csv; charset=utf-8', headers={
+            'Content-Disposition': 'attachment; filename="inventario-aveiro.csv"',
+            'Cache-Control': 'private, no-store',
+        })
 
     @api.get('/items/{item_id}')
     def item_detail(item_id: UUID):

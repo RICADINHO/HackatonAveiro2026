@@ -161,4 +161,8 @@ Em **Carregar foto ou vídeo**, escolhe um MP4, MOV ou WebM até **20 segundos e
 
 Escolhe um fotograma pela indicação de tempo. Marca a posição e a direção da câmara para esse instante e publica o fotograma no mapa. Podes repetir para outros fotogramas do mesmo vídeo. O servidor usa a informação de posição que indicas para cada um e conserva apenas os JPEG anonimizados para pré-visualização e publicação. Se o vídeo der um erro de descodificação, experimenta exportá-lo em MP4 com H.264.
 
+### Exportar o inventário
+
+No menu da conta de técnico, escolhe **Exportar inventário em CSV**. O ficheiro inclui todos os elementos do inventário, com identificador, categoria, classe, nome, latitude, longitude e indicação de posição corrigida.
+
 ## GitHub

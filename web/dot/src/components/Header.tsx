@@ -9,7 +9,8 @@ function initials(name: string | null, email: string | null): string {
   return source.slice(0, 2).toUpperCase()
 }
 
-export function Header({ account, email, openReports, onOpenAuth, onSignOut, onOpenUpload, onOpenReports, onOpenImages }: {
+export function Header({ account, email, openReports, onOpenAuth, onSignOut, onOpenUpload, onOpenReports, onOpenImages,
+  onExportInventory, csvBusy }: {
   account: Account | null
   email: string | null
   openReports: number
@@ -18,6 +19,8 @@ export function Header({ account, email, openReports, onOpenAuth, onSignOut, onO
   onOpenUpload: () => void
   onOpenReports: () => void
   onOpenImages: () => void
+  onExportInventory: () => void
+  csvBusy: boolean
 }) {
   const { dark, toggle } = useTheme()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -114,9 +117,16 @@ export function Header({ account, email, openReports, onOpenAuth, onSignOut, onO
                     {technician && openReports > 0 && <span className="menu-count">{openReports}</span>}
                   </button>
                   {technician && (
-                    <button type="button" role="menuitem" className="menu-item" onClick={() => { setMenuOpen(false); onOpenImages() }}>
-                      <i className="bi bi-images" aria-hidden="true" /> Gerir imagens
-                    </button>
+                    <>
+                      <button type="button" role="menuitem" className="menu-item" onClick={() => { setMenuOpen(false); onOpenImages() }}>
+                        <i className="bi bi-images" aria-hidden="true" /> Gerir imagens
+                      </button>
+                      <button type="button" role="menuitem" className="menu-item" disabled={csvBusy}
+                        onClick={() => { setMenuOpen(false); onExportInventory() }}>
+                        <i className="bi bi-download" aria-hidden="true" />
+                        {csvBusy ? 'A preparar CSV…' : 'Exportar inventário em CSV'}
+                      </button>
+                    </>
                   )}
                   <div className="menu-divider" />
                   <button type="button" role="menuitem" className="menu-item menu-item--danger" onClick={() => { setMenuOpen(false); onSignOut() }}>

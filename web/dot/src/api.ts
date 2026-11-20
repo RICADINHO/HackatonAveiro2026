@@ -30,6 +30,16 @@ export async function previewImage(id: string, token: string, signal?: AbortSign
   return (await request(`/previews/${id}/image`, { signal }, token)).blob()
 }
 
+export async function downloadInventoryCsv(token: string) {
+  const response = await request('/items/export.csv', {}, token)
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'inventario-aveiro.csv'
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export function imageUrl(path: string) {
   return /^https?:\/\//i.test(baseUrl) ? new URL(path, baseUrl).href : path
 }

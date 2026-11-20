@@ -10,7 +10,7 @@ import UploadDialog from './components/UploadDialog.tsx'
 import AuthDialog from './components/AuthDialog.tsx'
 import ReportsDialog from './components/ReportsDialog.tsx'
 import ImagesDialog from './components/ImagesDialog.tsx'
-import { api, errorMessage } from './api.ts'
+import { api, downloadInventoryCsv, errorMessage } from './api.ts'
 import { supabase } from './supabase.ts'
 import { CATEGORY_ORDER } from './constants.ts'
 import type { Account, InventoryCategory, InventoryItem, ItemDetail, Report } from './types.ts'
@@ -35,6 +35,7 @@ function AppShell() {
   const [reportsOpen, setReportsOpen] = useState(false)
   const [reportItem, setReportItem] = useState('')
   const [imagesOpen, setImagesOpen] = useState(false)
+  const [csvBusy, setCsvBusy] = useState(false)
   const [openReports, setOpenReports] = useState(0)
   const pendingUpload = useRef(false)
   const { toasts, notify, dismiss } = useToasts()
@@ -203,6 +204,18 @@ function AppShell() {
     }
   }
 
+  async function exportInventory() {
+    if (!technician || !token || csvBusy) return
+    setCsvBusy(true)
+    try {
+      await downloadInventoryCsv(token)
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    } finally {
+      setCsvBusy(false)
+    }
+  }
+
   const emptyMap = !mapLoading && !mapError && visibleItems.length === 0
 
   return (
@@ -216,6 +229,8 @@ function AppShell() {
         onOpenUpload={requestUpload}
         onOpenReports={requestReports}
         onOpenImages={() => setImagesOpen(true)}
+        onExportInventory={() => void exportInventory()}
+        csvBusy={csvBusy}
       />
 
       <main className="workspace">
