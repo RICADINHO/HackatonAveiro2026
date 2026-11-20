@@ -459,7 +459,7 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
               ) : (
                 <button type="button" className="btn btn-primary" onClick={() => void analyze(video.file, videoPoints)}
                   disabled={busy || readingLocations || !videoTimes.length || firstIncompleteTime !== undefined}>
-                  {busy ? 'A analisar os fotogramas…' : `Analisar fotogramas (${videoTimes.length})`}
+                  Analisar fotogramas ({videoTimes.length})
                 </button>
               )}
             </div>
@@ -574,6 +574,15 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
               </button>
             )}
           </div>
+        </div>
+      )}
+
+      {token && video && busy && (
+        <div className="upload-batch" role="status">
+          <label>
+            A analisar os fotogramas…
+            <progress />
+          </label>
         </div>
       )}
 
