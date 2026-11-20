@@ -283,7 +283,7 @@ Single-page app. No router: `App.tsx` owns view state and opens dialogs/drawers.
 - **Filter panel** (`FilterPanel.tsx`): category chips plus a scrollable "Tipos detetados" list that toggles individual `class_name` values, so subtypes such as bins and sign types can be shown or hidden independently.
 - **Location picker** (`LocationPicker.tsx`): reusable Leaflet map used for uploads and technician corrections. Click sets the camera point, a draggable arrow sets heading, a 65° FOV wedge visualizes the view. Also supports GPS and recentring. Heading is `[0, 360)`.
 - **Item drawer** (`ItemDrawer.tsx`): item metadata, image gallery/lightbox, uploader name, detections, and technician edit/move/delete controls.
-- **Upload** (`UploadDialog.tsx`): uses `/previews` for images or `/video-previews` for videos. Users can select and publish individual video frames. Location and heading are mandatory for each publication.
+- **Upload** (`UploadDialog.tsx`): uses `/previews` for images or `/video-previews` for videos. Users can select and publish individual video frames. Multiple selected photos are processed sequentially; photos with GPS and heading are published automatically, and the rest remain available for manual review. Location and heading are mandatory for each publication.
 - **Reports** (`ReportsDialog.tsx`): create reports (optionally tied to an item); technicians can resolve.
 - **Auth** (`AuthDialog.tsx` + `supabase.ts`): email/password sign-in/sign-up; the access token is passed to `api()`.
 - **Theme** (`theme.tsx`): light/dark, persisted in `localStorage`, applied before paint by an inline script in `index.html`.

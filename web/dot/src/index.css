@@ -2692,3 +2692,6 @@ a {
     scroll-behavior: auto !important;
   }
 }
+
+.upload-batch { margin: 1rem 0; }
+.upload-batch progress { width: 100%; accent-color: var(--accent); }

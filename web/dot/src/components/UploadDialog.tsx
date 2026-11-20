@@ -62,6 +62,8 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [dragging, setDragging] = useState(false)
+  const [batch, setBatch] = useState<{ done: number; total: number; current: string; errors: string[] } | null>(null)
+  const [batchMode, setBatchMode] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const requestRef = useRef<AbortController | null>(null)
   const staged = previews.find(({ preview }) => preview.id === selectedId) ?? previews[0]
@@ -79,6 +81,8 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
     setBusy(false)
     setMessage('')
     setDragging(false)
+    setBatch(null)
+    setBatchMode(false)
   }, [open])
 
   async function analyze(file: File) {
@@ -129,11 +133,75 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
     }
   }
 
+  async function analyzeFiles(files: File[]) {
+    if (files.length === 1) return analyze(files[0])
+    if (!files.length || busy || requestRef.current || !token) return
+    if (files.some((file) => !IMAGE_TYPES.includes(file.type))) {
+      setMessage('Para carregar vários ficheiros, escolhe apenas imagens JPEG, PNG ou WebP. Carrega vídeos individualmente.')
+      return
+    }
+    const controller = new AbortController()
+    requestRef.current = controller
+    const { signal } = controller
+    const pending: Staged[] = []
+    const errors: string[] = []
+    let published = 0
+    setBusy(true)
+    setBatchMode(true)
+    setMessage('')
+    setBatch({ done: 0, total: files.length, current: files[0].name, errors: [] })
+    try {
+      for (const [index, file] of files.entries()) {
+        if (signal.aborted) break
+        setBatch({ done: index, total: files.length, current: file.name, errors: [...errors] })
+        try {
+          if (file.size > 12 * MIB) throw new Error('O limite por imagem é 12 MiB.')
+          const form = new FormData()
+          form.append('image', file)
+          const preview = await api<Preview>('/previews', { method: 'POST', body: form, signal }, token)
+          const image = await previewImage(preview.id, token, signal)
+          const result: Staged = { preview, image, fileName: file.name }
+          if (signal.aborted) break
+          setPreviews([result])
+          setSelectedId(preview.id)
+          if (missingFields(preview.camera).length) {
+            pending.push(result)
+          } else {
+            try {
+              await api(`/previews/${preview.id}/publish`, {
+                method: 'POST', signal, body: JSON.stringify(preview.camera),
+              }, token)
+              published += 1
+              onPublished()
+            } catch (error) {
+              if (signal.aborted) break
+              pending.push(result)
+              errors.push(`${file.name}: ${errorMessage(error)}`)
+            }
+          }
+        } catch (error) {
+          if (signal.aborted) break
+          errors.push(`${file.name}: ${errorMessage(error)}`)
+        }
+        setBatch({ done: index + 1, total: files.length, current: file.name, errors: [...errors] })
+      }
+      if (!signal.aborted) {
+        setPreviews(pending)
+        setSelectedId(pending[0]?.preview.id ?? '')
+        if (published) notify(`${published} ${published === 1 ? 'imagem publicada' : 'imagens publicadas'}. O mapa foi atualizado.`, 'success')
+      }
+    } finally {
+      if (requestRef.current === controller) {
+        requestRef.current = null
+        if (!signal.aborted) setBusy(false)
+      }
+    }
+  }
+
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
     setDragging(false)
-    const file = event.dataTransfer.files?.[0]
-    if (file) void analyze(file)
+    void analyzeFiles(Array.from(event.dataTransfer.files))
   }
 
   async function publish() {
@@ -160,7 +228,11 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
       if (signal.aborted) return
       notify(isFrame ? 'Fotograma publicado. O mapa foi atualizado.' : 'Imagem publicada. O mapa foi atualizado.', 'success')
       onPublished()
-      if (isFrame) {
+      if (batchMode) {
+        const remaining = previews.filter(({ preview }) => preview.id !== staged.preview.id)
+        setPreviews(remaining)
+        setSelectedId(remaining[0]?.preview.id ?? '')
+      } else if (isFrame) {
         setPublishedIds((current) => [...current, staged.preview.id])
       } else {
         onClose()
@@ -181,6 +253,8 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
     setPoints({})
     setPublishedIds([])
     setMessage('')
+    setBatch(null)
+    setBatchMode(false)
     if (inputRef.current) inputRef.current.value = ''
   }
 
@@ -203,7 +277,7 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
         </div>
       )}
 
-      {token && !staged && (
+      {token && !staged && !batch && (
         <div
           className={`dropzone${dragging ? ' is-dragging' : ''}${busy ? ' is-busy' : ''}`}
           onDragOver={(event) => { event.preventDefault(); setDragging(true) }}
@@ -213,18 +287,19 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
           <input
             ref={inputRef}
             type="file"
+            multiple
             accept={ACCEPTED.join(',')}
             className="visually-hidden"
             onChange={(event) => {
-              const file = event.target.files?.[0]
+              const files = Array.from(event.target.files ?? [])
               event.target.value = ''
-              if (file) void analyze(file)
+              void analyzeFiles(files)
             }}
           />
           <span className="dropzone__icon">
             <i className={`bi ${busy ? 'bi-hourglass-split' : 'bi-image'}`} aria-hidden="true" />
           </span>
-          <h3>{busy ? 'A analisar o ficheiro…' : 'Arrasta uma foto ou um vídeo para aqui'}</h3>
+          <h3>{busy ? 'A analisar o ficheiro…' : 'Arrasta fotos ou um vídeo para aqui'}</h3>
           {busy ? <p>A detetar mobiliário urbano e a desfocar rostos e matrículas.</p> : (
             <>
               <p>Fotos JPEG, PNG ou WebP até 12 MiB</p>
@@ -232,12 +307,27 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
             </>
           )}
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => inputRef.current?.click()}>
-            <i className="bi bi-folder2-open" aria-hidden="true" /> Escolher ficheiro
+            <i className="bi bi-folder2-open" aria-hidden="true" /> Escolher ficheiros
           </button>
         </div>
       )}
 
-      {token && staged && point && (
+      {token && staged && busy && batchMode && (
+        <div className="upload-review__image">
+          <DetectionImage src={staged.image} detections={staged.preview.detections} alt="Última imagem analisada com deteções" />
+          <p className="field-hint">Última imagem analisada: {staged.fileName}</p>
+        </div>
+      )}
+      {batch && (
+        <div className="upload-batch" aria-live="polite">
+          <p>{busy ? `A analisar: ${batch.current}` : 'Processamento concluído'} · {batch.done}/{batch.total}</p>
+          <progress value={batch.done} max={batch.total} aria-label="Progresso do carregamento" />
+          {!busy && previews.length > 0 && <p>{previews.length} {previews.length === 1 ? 'imagem precisa de revisão' : 'imagens precisam de revisão'} antes da publicação.</p>}
+          {batch.errors.length > 0 && <div className="form-message form-message--error" role="alert">{batch.errors.map((error, index) => <p key={index}>{error}</p>)}</div>}
+          {!busy && previews.length === 0 && <button type="button" className="btn btn-ghost" onClick={reset}>Carregar mais ficheiros</button>}
+        </div>
+      )}
+      {token && staged && point && !(busy && batchMode) && (
         <div className="upload-review">
           <div className="upload-review__media">
             <div className="upload-review__image">
@@ -251,16 +341,16 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
                 <i className="bi bi-arrow-repeat" aria-hidden="true" /> Trocar
               </button>
             </div>
-            {isFrame && (
+            {(isFrame || batchMode) && (
               <label className="field">
-                Fotograma do vídeo
+                {batchMode ? 'Imagem a rever' : 'Fotograma do vídeo'}
                 <select className="select" value={selectedId} disabled={busy} onChange={(event) => {
                   setSelectedId(event.target.value)
                   setMessage('')
                 }}>
-                  {previews.map(({ preview, timestampMs }) => (
+                  {previews.map(({ preview, timestampMs, fileName }) => (
                     <option key={preview.id} value={preview.id}>
-                      {((timestampMs ?? 0) / 1000).toLocaleString('pt-PT', { maximumFractionDigits: 1 })} s
+                      {batchMode ? fileName : `${((timestampMs ?? 0) / 1000).toLocaleString('pt-PT', { maximumFractionDigits: 1 })} s`}
                       {' · '}{preview.detections.length} {preview.detections.length === 1 ? 'deteção' : 'deteções'}
                       {publishedIds.includes(preview.id) ? ' · Publicado' : ''}
                     </option>
