@@ -53,6 +53,10 @@ export interface Preview {
   detections: Detection[]
 }
 
+export interface VideoFramePreview extends Preview {
+  timestamp_ms: number
+}
+
 export interface CameraPoint {
   latitude: number | null
   longitude: number | null

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
@@ -22,7 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from .. import inventory
 from ..anonymization import AnonymizationError
-from ..imaging import MAX_IMAGE_BYTES, DetectorError, prepare_photo
+from ..imaging import MAX_IMAGE_BYTES, DetectorError, prepare_frame, prepare_photo
+from ..video import MAX_VIDEO_BYTES, VideoInputError, read_video_samples
 from .config import Settings
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,21 @@ def remove_file(path: Path):
         path.unlink(missing_ok=True)
     except OSError:
         logger.exception('Could not remove %s', path)
+
+
+@contextmanager
+def preview_output():
+    with ExitStack() as cleanup:
+        try:
+            yield cleanup
+        except DetectorError as exc:
+            logger.exception('Falhou a deteção de mobiliário urbano')
+            raise HTTPException(503, 'O detetor de mobiliário urbano está indisponível.') from exc
+        except AnonymizationError as exc:
+            logger.exception('Falhou a anonimização da imagem')
+            raise HTTPException(503, 'A anonimização de rostos e matrículas está indisponível.') from exc
+        else:
+            cleanup.pop_all()
 
 
 def create_app(settings: Settings):
@@ -191,6 +207,12 @@ def create_app(settings: Settings):
             image['url'] = f"/img/{image.pop('file_path')}"
         return rows
 
+    def save_previews(user: Principal, previews: list[dict]):
+        with pool.connection() as db, db.transaction(), db.cursor() as cursor:
+            cursor.executemany('''
+                INSERT INTO aveiro.image_previews (id, owner_id, metadata, detections) VALUES (%s,%s,%s,%s)
+            ''', [(row['id'], user.id, Jsonb(row['camera']), Jsonb(row['detections'])) for row in previews])
+
     @api.post('/previews', status_code=201)
     def create_preview(user: Annotated[Principal, Depends(authenticated)], image: Annotated[UploadFile, File()]):
         contents = image.file.read(MAX_IMAGE_BYTES + 1)
@@ -199,30 +221,41 @@ def create_app(settings: Settings):
         preview_id = uuid4()
         path = private_dir / f'{preview_id}.jpg'
         try:
-            camera, detections = prepare_photo(contents, path, models_dir)
-            with pool.connection() as db:
-                db.execute('INSERT INTO aveiro.image_previews (id, owner_id, metadata, detections) VALUES (%s,%s,%s,%s)',
-                           (preview_id, user.id, Jsonb(camera), Jsonb(detections)))
-        except DetectorError as exc:
-            remove_file(path)
-            logger.exception('Falhou a deteção de mobiliário urbano')
-            raise HTTPException(503, 'O detetor de mobiliário urbano está indisponível.') from exc
-        except AnonymizationError as exc:
-            remove_file(path)
-            logger.exception('Falhou a anonimização da imagem')
-            raise HTTPException(503, 'A anonimização de rostos e matrículas está indisponível.') from exc
+            with preview_output() as cleanup:
+                cleanup.callback(remove_file, path)
+                camera, detections = prepare_photo(contents, path, models_dir)
+                preview = {'id': preview_id, 'camera': camera, 'detections': detections}
+                save_previews(user, [preview])
         except (ValueError, SyntaxError, Image.DecompressionBombError) as exc:
-            remove_file(path)
             raise HTTPException(422, 'Seleciona uma imagem JPEG, PNG ou WebP válida.') from exc
         except OSError as exc:
-            remove_file(path)
             if exc.errno is not None:
                 raise
             raise HTTPException(422, 'A imagem não pôde ser lida.') from exc
-        except Exception:
-            remove_file(path)
-            raise
-        return {'id': preview_id, 'camera': camera, 'detections': detections}
+        return preview
+
+    @api.post('/video-previews', status_code=201)
+    def create_video_previews(user: Annotated[Principal, Depends(authenticated)], video: Annotated[UploadFile, File()]):
+        video.file.seek(0, os.SEEK_END)
+        if video.file.tell() > MAX_VIDEO_BYTES:
+            raise HTTPException(413, 'O limite por vídeo é 50 MiB.')
+        video.file.seek(0)
+        try:
+            samples = read_video_samples(video.file, Path(video.filename or '').suffix.lower())
+        except VideoInputError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+        previews = []
+        with preview_output() as cleanup:
+            for timestamp_ms, photo in samples:
+                preview_id = uuid4()
+                path = private_dir / f'{preview_id}.jpg'
+                cleanup.callback(remove_file, path)
+                detections = prepare_frame(photo, path, models_dir)
+                previews.append({'id': preview_id, 'camera': CameraInput().model_dump(),
+                                 'detections': detections, 'timestamp_ms': timestamp_ms})
+            save_previews(user, previews)
+        return {'frames': previews}
 
     @api.get('/previews/{preview_id}/image')
     def preview_image(preview_id: UUID, user: Annotated[Principal, Depends(authenticated)]):
@@ -365,7 +398,7 @@ def create_app(settings: Settings):
     @app.api_route('/{path:path}', methods=['GET', 'HEAD'], include_in_schema=False)
     def frontend(path: str):
         namespace = path.partition('/')[0]
-        if namespace in {'api', 'img', 'items', 'images', 'published', 'previews', 'reports', 'me'} or any(
+        if namespace in {'api', 'img', 'items', 'images', 'published', 'previews', 'video-previews', 'reports', 'me'} or any(
             part.startswith('.') for part in Path(path).parts
         ):
             raise HTTPException(404)

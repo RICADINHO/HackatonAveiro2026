@@ -107,7 +107,7 @@ export function Header({ account, email, openReports, onOpenAuth, onSignOut, onO
                 </div>
                 <div className="account__items">
                   <button type="button" role="menuitem" className="menu-item" onClick={() => { setMenuOpen(false); onOpenUpload() }}>
-                    <i className="bi bi-cloud-arrow-up" aria-hidden="true" /> Carregar imagem
+                    <i className="bi bi-cloud-arrow-up" aria-hidden="true" /> Carregar foto ou vídeo
                   </button>
                   <button type="button" role="menuitem" className="menu-item" onClick={() => { setMenuOpen(false); onOpenReports() }}>
                     <i className="bi bi-flag" aria-hidden="true" /> Problemas

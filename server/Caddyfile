@@ -18,6 +18,14 @@
 		respond 404
 	}
 
+	@video path /api/video-previews /video-previews
+	handle @video {
+		request_body {
+			max_size 53477376
+		}
+		reverse_proxy 127.0.0.1:8000
+	}
+
 	handle {
 		request_body {
 			max_size 13631488

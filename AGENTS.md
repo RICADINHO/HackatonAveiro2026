@@ -54,6 +54,7 @@ The FastAPI process serves the built SPA, the API, and the images from one origi
 │   │   └── config.py          ← settings, hardcoded Supabase/CORS/dedup values
 │   ├── imaging.py             ← EXIF, YOLO detection, JPEG preparation, projection
 │   ├── anonymization.py       ← face and plate detection, blur and pixelation
+│   ├── video.py               ← local decoding and frame sampling for short videos
 │   ├── inventory.py           ← SQL for items/images/detections, dedupe, recompute
 │   ├── migrations/001_inventory.sql
 │   ├── schema.sql             ← psql entry point for migrations
@@ -218,6 +219,7 @@ Entry point: `server/app/__main__.py` → `Settings.from_env()` → `create_app(
 | GET | `/items/{id}` | public | Item detail with its images and detections |
 | GET | `/images` | technician | All published images |
 | POST | `/previews` | user | Detect furniture, anonymize, and return `{id, camera, detections}` |
+| POST | `/video-previews` | user | Analyze up to four video frames; return `{frames: [{id, camera, detections, timestamp_ms}]}` |
 | GET | `/previews/{id}/image` | owner | Blurred staged JPEG |
 | POST | `/previews/{id}/publish` | owner | Publish with manual `{latitude, longitude, heading}` |
 | GET | `/published/{id}` | user | 204 probe used to detect already-published previews |
@@ -238,6 +240,8 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 3. The preview row stores `metadata` (camera) and `detections` for 30 minutes.
 4. The client shows the blurred image with detection boxes and asks for position + heading (map picker or GPS).
 5. `POST /api/previews/{id}/publish` moves the file to `images/public/`, inserts the image and detections, and creates/merges items in one transaction.
+
+`POST /api/video-previews` takes MP4, MOV or WebM (50 MiB and 20 seconds maximum). It samples up to four frames and runs the shared image pipeline. GPS is entered separately for each frame. Only anonymized JPEG previews enter the existing preview and publication workflow, and the temporary source video is removed after sampling.
 
 ### Projection and dedupe
 
@@ -273,7 +277,7 @@ Single-page app. No router: `App.tsx` owns view state and opens dialogs/drawers.
 - **Map** (`MapView.tsx`): Leaflet with CARTO tiles from `mapTiles.ts`; category-coloured markers; fit/fly to selection.
 - **Location picker** (`LocationPicker.tsx`): reusable Leaflet map used for uploads and technician corrections. Click sets the camera point, a draggable arrow sets heading, a 65° FOV wedge visualizes the view. Also supports GPS and recentring. Heading is `[0, 360)`.
 - **Item drawer** (`ItemDrawer.tsx`): item metadata, image gallery/lightbox, uploader name, detections, and technician edit/move/delete controls.
-- **Upload** (`UploadDialog.tsx`): file → `POST /previews` → blurred preview with boxes → location/heading → publish. Location and heading are mandatory before publishing.
+- **Upload** (`UploadDialog.tsx`): uses `/previews` for images or `/video-previews` for videos. Users can select and publish individual video frames. Location and heading are mandatory for each publication.
 - **Reports** (`ReportsDialog.tsx`): create reports (optionally tied to an item); technicians can resolve.
 - **Auth** (`AuthDialog.tsx` + `supabase.ts`): email/password sign-in/sign-up; the access token is passed to `api()`.
 - **Theme** (`theme.tsx`): light/dark, persisted in `localStorage`, applied before paint by an inline script in `index.html`.

@@ -26,8 +26,8 @@ export async function api<T>(path: string, options?: RequestInit, token?: string
   return response.status === 204 ? (undefined as T) : response.json()
 }
 
-export async function previewImage(id: string, token: string) {
-  return (await request(`/previews/${id}/image`, {}, token)).blob()
+export async function previewImage(id: string, token: string, signal?: AbortSignal) {
+  return (await request(`/previews/${id}/image`, { signal }, token)).blob()
 }
 
 export function imageUrl(path: string) {

@@ -264,6 +264,10 @@ def prepare_photo(contents: bytes, destination: Path, models_dir: Path):
             raise ValueError('Animated image')
         camera = read_camera(original)
         photo = ImageOps.exif_transpose(original).convert('RGB')
+    return camera, prepare_frame(photo, destination, models_dir)
+
+
+def prepare_frame(photo: Image.Image, destination: Path, models_dir: Path):
     photo.thumbnail((1920, 1920))
     detections = [asdict(detection) for detection in classify_detections(photo, detect(photo, models_dir))]
     redacted = anonymize(photo, models_dir)
@@ -271,7 +275,7 @@ def prepare_photo(contents: bytes, destination: Path, models_dir: Path):
     redacted.info.clear()
     with destination.open('xb') as output:
         redacted.save(output, format='JPEG', quality=88)
-    return camera, detections
+    return detections
 
 
 def projection(heading, bbox):

@@ -87,7 +87,7 @@ export function FilterPanel({ items, visibleCount, filters, onToggleCategory, se
             )}
             <button type="button" className="btn btn-primary filter-panel__upload" onClick={onOpenUpload}>
               <i className="bi bi-cloud-arrow-up-fill" aria-hidden="true" />
-              Carregar imagem
+              Carregar foto ou vídeo
             </button>
           </div>
 

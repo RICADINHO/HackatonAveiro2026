@@ -7,6 +7,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
+import cv2
+import numpy as np
 import psycopg
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
@@ -17,6 +19,39 @@ from psycopg.conninfo import make_conninfo
 from server.app import Settings, create_app
 from server.anonymization import AnonymizationError, anonymize
 from server.imaging import Detection, classify_detections, detect, prepare_photo
+from server.video import VideoInputError, read_video_samples
+
+
+def write_video(path: Path, seconds: int):
+    writer = cv2.VideoWriter(str(path), cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'mp4v'), 2, (160, 120))
+    if not writer.isOpened():
+        raise RuntimeError('Could not create test video.')
+    try:
+        for frame in range(seconds * 2):
+            writer.write(np.full((120, 160, 3), (frame * 5, 0, 0), dtype=np.uint8))
+    finally:
+        writer.release()
+
+
+class VideoSampling(unittest.TestCase):
+    def test_decodes_at_most_four_distinct_samples(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'sample.mp4'
+            write_video(path, seconds=12)
+            with path.open('rb') as video:
+                samples = read_video_samples(video, '.mp4')
+            self.assertEqual([timestamp for timestamp, _ in samples], [0, 3000, 6000, 9000])
+            self.assertTrue(all(frame.size == (160, 120) and frame.mode == 'RGB' for _, frame in samples))
+            self.assertEqual(len({frame.getpixel((10, 10)) for _, frame in samples}), 4)
+
+    def test_rejects_long_and_invalid_videos(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'long.mp4'
+            write_video(path, seconds=21)
+            with path.open('rb') as video, self.assertRaisesRegex(VideoInputError, '20 segundos'):
+                read_video_samples(video, '.mp4')
+        with self.assertRaises(VideoInputError):
+            read_video_samples(BytesIO(b'not a video'), '.webm')
 
 
 class CameraMetadata(unittest.TestCase):
@@ -194,6 +229,57 @@ class InventoryWorkflow(unittest.TestCase):
             db.execute(migrate)
             db.execute(migrate)
             assert db.execute('SELECT content FROM public.existing_data').fetchone() == ('keep',)
+
+    def test_video_previews_are_private_and_publish_individually(self):
+        user_id, other_id = uuid4(), uuid4()
+        owners = {'Bearer owner': user_id, 'Bearer other': other_id}
+        coordinates = {'latitude': 40.6405, 'longitude': -8.6538, 'heading': 90}
+        owner_headers = {'Authorization': 'Bearer owner'}
+        other_headers = {'Authorization': 'Bearer other'}
+        detected = Detection('sinalizacao', 'stop', 'Sinal de STOP', 0.9, (0.1, 0.2, 0.3, 0.4))
+
+        def fake_auth(_url, *, headers, **_kwargs):
+            identity = owners[headers['Authorization']]
+            return Mock(status_code=200, json=lambda: {'role': 'authenticated', 'id': str(identity)})
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / 'source.mp4'
+            write_video(media, seconds=4)
+            files = {'video': ('source.mp4', media.read_bytes(), 'video/mp4')}
+            settings = Settings(self.dsn, 'https://test.supabase.co', 'test-key', root)
+            with (
+                patch('server.app.requests.get', side_effect=fake_auth),
+                patch('server.imaging.detect', return_value=[detected]),
+                patch('server.imaging.anonymize', side_effect=[Image.new('RGB', (160, 120)), AnonymizationError]),
+                TestClient(create_app(settings)) as client,
+            ):
+                self.assertEqual(client.post('/api/video-previews', files=files).status_code, 401)
+                self.assertEqual(client.post('/api/video-previews', headers=owner_headers, files=files).status_code, 503)
+                self.assertEqual(list((root / 'images/private').glob('*')), [])
+
+                with patch('server.imaging.anonymize', side_effect=lambda frame, _: Image.new('RGB', frame.size, 'white')):
+                    result = client.post('/api/video-previews', headers=owner_headers, files=files)
+                self.assertEqual(result.status_code, 201, result.text)
+                first, second = result.json()['frames']
+                self.assertEqual([first['timestamp_ms'], second['timestamp_ms']], [0, 2000])
+                self.assertEqual(first['camera'], dict.fromkeys(coordinates))
+                self.assertEqual(second['camera'], dict.fromkeys(coordinates))
+                self.assertEqual(first['detections'][0]['class_name'], 'stop')
+                first_path = f"/api/previews/{first['id']}"
+                second_path = f"/api/previews/{second['id']}"
+                private_path = first_path + '/image'
+                self.assertEqual(client.get(private_path, headers=other_headers).status_code, 404)
+                preview = client.get(private_path, headers=owner_headers)
+                self.assertEqual(preview.status_code, 200)
+                with Image.open(BytesIO(preview.content)) as staged:
+                    self.assertEqual(staged.format, 'JPEG')
+                    self.assertEqual(staged.getpixel((10, 10)), (255, 255, 255))
+                self.assertEqual(client.post(first_path + '/publish', headers=owner_headers, json={}).status_code, 422)
+                self.assertEqual(client.post(first_path + '/publish', headers=owner_headers, json=coordinates).status_code, 200)
+                self.assertEqual(client.get(f"/img/{first['id']}.jpg").content, preview.content)
+                self.assertEqual(client.get(second_path + '/image', headers=owner_headers).status_code, 200)
+                self.assertEqual(client.get(f"/img/{second['id']}.jpg").status_code, 404)
 
     def test_inventory_workflow(self):
         owner, technician, other = uuid4(), uuid4(), uuid4()

@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { api, errorMessage, previewImage } from '../api.ts'
 import { CATEGORY_META, categoryForClass, classLabel } from '../constants.ts'
-import type { CameraPoint, Detection, InventoryCategory, Preview } from '../types.ts'
+import type { CameraPoint, Detection, InventoryCategory, Preview, VideoFramePreview } from '../types.ts'
 import { DetectionImage } from './DetectionImage.tsx'
 import { LocationPicker } from './LocationPicker.tsx'
 import { Modal } from './Modal.tsx'
 
-const MAX_BYTES = 12 * 1024 * 1024
-const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp']
+const MIB = 1024 * 1024
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm']
+const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm']
+const ACCEPTED = [...IMAGE_TYPES, ...VIDEO_TYPES, ...VIDEO_EXTENSIONS]
 
 interface Staged {
   preview: Preview
   image: Blob
   fileName: string
+  timestampMs?: number
 }
 
 function missingFields(point: CameraPoint): string[] {
@@ -51,52 +55,77 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
   onPublished: () => void
   notify: (text: string, kind?: 'success' | 'error' | 'info') => void
 }) {
-  const [staged, setStaged] = useState<Staged | null>(null)
-  const [point, setPoint] = useState<CameraPoint>({ latitude: null, longitude: null, heading: null })
+  const [previews, setPreviews] = useState<Staged[]>([])
+  const [selectedId, setSelectedId] = useState('')
+  const [points, setPoints] = useState<Record<string, CameraPoint>>({})
+  const [publishedIds, setPublishedIds] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const requestRef = useRef<AbortController | null>(null)
+  const staged = previews.find(({ preview }) => preview.id === selectedId) ?? previews[0]
+  const point = staged ? points[staged.preview.id] ?? staged.preview.camera : null
+  const isFrame = staged?.timestampMs !== undefined
+  const isPublished = staged ? publishedIds.includes(staged.preview.id) : false
 
   useEffect(() => {
-    if (open) return
-    setStaged(null)
-    setPoint({ latitude: null, longitude: null, heading: null })
+    if (open) return () => requestRef.current?.abort()
+    requestRef.current = null
+    setPreviews([])
+    setSelectedId('')
+    setPoints({})
+    setPublishedIds([])
     setBusy(false)
     setMessage('')
     setDragging(false)
   }, [open])
 
   async function analyze(file: File) {
+    if (busy || requestRef.current) return
     if (!token) {
-      setMessage('Inicia sessão para carregar imagens.')
+      setMessage('Inicia sessão para carregar imagens ou vídeos.')
       return
     }
-    if (!ACCEPTED.includes(file.type)) {
-      setMessage('Escolhe uma imagem JPEG, PNG ou WebP.')
+    const isVideo = VIDEO_TYPES.includes(file.type)
+      || VIDEO_EXTENSIONS.some((extension) => file.name.toLowerCase().endsWith(extension))
+    if (!isVideo && !IMAGE_TYPES.includes(file.type)) {
+      setMessage('Escolhe uma imagem JPEG, PNG ou WebP ou um vídeo MP4, MOV ou WebM.')
       return
     }
-    if (file.size > MAX_BYTES) {
-      setMessage('O limite por imagem é 12 MiB.')
+    if (file.size > (isVideo ? 50 : 12) * MIB) {
+      setMessage(isVideo ? 'O limite por vídeo é 50 MiB.' : 'O limite por imagem é 12 MiB.')
       return
     }
+    const controller = new AbortController()
+    requestRef.current = controller
+    const { signal } = controller
     setBusy(true)
     setMessage('')
     try {
       const form = new FormData()
-      form.append('image', file)
-      const preview = await api<Preview>('/previews', { method: 'POST', body: form }, token)
-      const image = await previewImage(preview.id, token)
-      setStaged({ preview, image, fileName: file.name })
-      setPoint({
-        latitude: preview.camera.latitude,
-        longitude: preview.camera.longitude,
-        heading: preview.camera.heading,
-      })
+      form.append(isVideo ? 'video' : 'image', file)
+      const options = { method: 'POST', body: form, signal }
+      const entries: (Preview & { timestamp_ms?: number })[] = isVideo
+        ? (await api<{ frames: VideoFramePreview[] }>('/video-previews', options, token)).frames
+        : [await api<Preview>('/previews', options, token)]
+      const results = await Promise.all(entries.map(async (preview) => ({
+        preview,
+        image: await previewImage(preview.id, token, signal),
+        fileName: file.name,
+        timestampMs: preview.timestamp_ms,
+      })))
+      if (!signal.aborted) {
+        setPreviews(results)
+        setSelectedId(results[0].preview.id)
+      }
     } catch (error) {
-      setMessage(errorMessage(error))
+      if (!signal.aborted) setMessage(errorMessage(error))
     } finally {
-      setBusy(false)
+      if (requestRef.current === controller) {
+        requestRef.current = null
+        if (!signal.aborted) setBusy(false)
+      }
     }
   }
 
@@ -108,48 +137,61 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
   }
 
   async function publish() {
-    if (!staged || !token) return
+    if (!staged || !point || !token || isPublished || busy || requestRef.current) return
     if (missingFields(point).length > 0) {
       setMessage('Indica a posição e a direção da câmara antes de publicar.')
       return
     }
+    const controller = new AbortController()
+    requestRef.current = controller
+    const { signal } = controller
     setBusy(true)
     setMessage('')
     try {
       await api(`/previews/${staged.preview.id}/publish`, {
         method: 'POST',
+        signal,
         body: JSON.stringify({
           latitude: point.latitude,
           longitude: point.longitude,
           heading: point.heading,
         }),
       }, token)
-      setStaged(null)
-      notify('Imagem publicada. O mapa foi atualizado.', 'success')
+      if (signal.aborted) return
+      notify(isFrame ? 'Fotograma publicado. O mapa foi atualizado.' : 'Imagem publicada. O mapa foi atualizado.', 'success')
       onPublished()
-      onClose()
+      if (isFrame) {
+        setPublishedIds((current) => [...current, staged.preview.id])
+      } else {
+        onClose()
+      }
     } catch (error) {
-      setMessage(errorMessage(error))
+      if (!signal.aborted) setMessage(errorMessage(error))
     } finally {
-      setBusy(false)
+      if (requestRef.current === controller) {
+        requestRef.current = null
+        if (!signal.aborted) setBusy(false)
+      }
     }
   }
 
   function reset() {
-    setStaged(null)
-    setPoint({ latitude: null, longitude: null, heading: null })
+    setPreviews([])
+    setSelectedId('')
+    setPoints({})
+    setPublishedIds([])
     setMessage('')
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  const missing = missingFields(point)
+  const missing = point ? missingFields(point) : []
   const summary = staged ? detectionSummary(staged.preview.detections) : []
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Carregar imagem"
+      title="Carregar foto ou vídeo"
       subtitle="Detetamos mobiliário urbano e desfocamos rostos e matrículas antes da publicação."
       icon="bi-cloud-arrow-up"
       size="xl"
@@ -157,7 +199,7 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
       {!token && (
         <div className="empty-state empty-state--error">
           <i className="bi bi-lock" aria-hidden="true" />
-          <p>Precisas de uma conta para carregar imagens. Inicia sessão e tenta novamente.</p>
+          <p>Inicia sessão para carregar imagens ou vídeos.</p>
         </div>
       )}
 
@@ -175,21 +217,27 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
             className="visually-hidden"
             onChange={(event) => {
               const file = event.target.files?.[0]
+              event.target.value = ''
               if (file) void analyze(file)
             }}
           />
           <span className="dropzone__icon">
             <i className={`bi ${busy ? 'bi-hourglass-split' : 'bi-image'}`} aria-hidden="true" />
           </span>
-          <h3>{busy ? 'A processar a imagem…' : 'Arrasta uma fotografia para aqui'}</h3>
-          <p>{busy ? 'A detetar mobiliário urbano e a desfocar rostos e matrículas.' : 'JPEG, PNG ou WebP · até 12 MiB'}</p>
+          <h3>{busy ? 'A analisar o ficheiro…' : 'Arrasta uma foto ou um vídeo para aqui'}</h3>
+          {busy ? <p>A detetar mobiliário urbano e a desfocar rostos e matrículas.</p> : (
+            <>
+              <p>Fotos JPEG, PNG ou WebP até 12 MiB</p>
+              <p>Vídeos MP4, MOV ou WebM até 50 MiB e 20 segundos. Analisamos até quatro fotogramas.</p>
+            </>
+          )}
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => inputRef.current?.click()}>
             <i className="bi bi-folder2-open" aria-hidden="true" /> Escolher ficheiro
           </button>
         </div>
       )}
 
-      {token && staged && (
+      {token && staged && point && (
         <div className="upload-review">
           <div className="upload-review__media">
             <div className="upload-review__image">
@@ -203,6 +251,23 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
                 <i className="bi bi-arrow-repeat" aria-hidden="true" /> Trocar
               </button>
             </div>
+            {isFrame && (
+              <label className="field">
+                Fotograma do vídeo
+                <select className="select" value={selectedId} disabled={busy} onChange={(event) => {
+                  setSelectedId(event.target.value)
+                  setMessage('')
+                }}>
+                  {previews.map(({ preview, timestampMs }) => (
+                    <option key={preview.id} value={preview.id}>
+                      {((timestampMs ?? 0) / 1000).toLocaleString('pt-PT', { maximumFractionDigits: 1 })} s
+                      {' · '}{preview.detections.length} {preview.detections.length === 1 ? 'deteção' : 'deteções'}
+                      {publishedIds.includes(preview.id) ? ' · Publicado' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <div className="detection-summary">
               <div className="detection-summary__head">
@@ -228,11 +293,12 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
 
           <div className="upload-review__side">
             <div className="upload-review__heading">
-              <h3>Onde foi tirada?</h3>
-              <p>Marca a posição da câmara e arrasta a seta para indicar a direção.</p>
+              <h3>{isFrame ? 'Onde foi gravado este fotograma?' : 'Onde foi tirada?'}</h3>
+              <p>Marca a posição da câmara no mapa e arrasta a seta para indicar a direção.</p>
             </div>
-            <LocationPicker value={point} onChange={setPoint} height={270} />
-            <div className="source-tags">
+            <LocationPicker key={staged.preview.id} value={point}
+              onChange={(next) => setPoints((current) => ({ ...current, [staged.preview.id]: next }))} height={270} />
+            {!isFrame && <div className="source-tags">
               <span className={`source-tag${staged.preview.camera.latitude !== null && staged.preview.camera.longitude !== null ? ' is-on' : ''}`}>
                 <i className={`bi ${staged.preview.camera.latitude !== null ? 'bi-check-circle-fill' : 'bi-dash-circle'}`} aria-hidden="true" />
                 GPS da imagem
@@ -241,7 +307,7 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
                 <i className={`bi ${staged.preview.camera.heading !== null ? 'bi-check-circle-fill' : 'bi-dash-circle'}`} aria-hidden="true" />
                 Direção da imagem
               </span>
-            </div>
+            </div>}
             {missing.length > 0 && (
               <p className="field-hint field-hint--warn">
                 <i className="bi bi-exclamation-triangle" aria-hidden="true" />
@@ -249,10 +315,11 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
               </p>
             )}
             <div className="upload-review__actions">
-              <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancelar</button>
-              <button type="button" className="btn btn-primary" onClick={() => void publish()} disabled={busy || missing.length > 0}>
+              <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>{isFrame ? 'Fechar' : 'Cancelar'}</button>
+              <button type="button" className="btn btn-primary" onClick={() => void publish()}
+                disabled={busy || isPublished || missing.length > 0}>
                 <i className="bi bi-cloud-arrow-up-fill" aria-hidden="true" />
-                {busy ? 'A publicar…' : 'Publicar no mapa'}
+                {isPublished ? 'Publicado' : busy ? 'A publicar…' : isFrame ? 'Publicar fotograma' : 'Publicar no mapa'}
               </button>
             </div>
           </div>
