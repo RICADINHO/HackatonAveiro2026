@@ -10,6 +10,9 @@ const MIB = 1024 * 1024
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm']
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm']
+const MAX_VIDEO_SECONDS = 20
+const VIDEO_INTERVAL_MS = 4000
+const EMPTY_POINT: CameraPoint = { latitude: null, longitude: null, heading: null }
 const ACCEPTED = [...IMAGE_TYPES, ...VIDEO_TYPES, ...VIDEO_EXTENSIONS]
 
 interface Staged {
@@ -19,9 +22,13 @@ interface Staged {
   timestampMs?: number
 }
 
+function hasPosition(point?: CameraPoint): boolean {
+  return point != null && point.latitude !== null && point.longitude !== null
+}
+
 function missingFields(point: CameraPoint): string[] {
   const missing: string[] = []
-  if (point.latitude === null || point.longitude === null) missing.push('posição')
+  if (!hasPosition(point)) missing.push('posição')
   if (point.heading === null) missing.push('direção')
   return missing
 }
@@ -64,12 +71,40 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
   const [dragging, setDragging] = useState(false)
   const [batch, setBatch] = useState<{ done: number; total: number; current: string; errors: string[] } | null>(null)
   const [batchMode, setBatchMode] = useState(false)
+  const [video, setVideo] = useState<{ file: File; url: string } | null>(null)
+  const [readingLocations, setReadingLocations] = useState(false)
+  const [videoTimes, setVideoTimes] = useState<number[]>([])
+  const [selectedVideoTime, setSelectedVideoTime] = useState<number | null>(null)
+  const [videoPoints, setVideoPoints] = useState<Record<number, CameraPoint>>({})
+  const videoRef = useRef<HTMLVideoElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const requestRef = useRef<AbortController | null>(null)
   const staged = previews.find(({ preview }) => preview.id === selectedId) ?? previews[0]
   const point = staged ? points[staged.preview.id] ?? staged.preview.camera : null
   const isFrame = staged?.timestampMs !== undefined
   const isPublished = staged ? publishedIds.includes(staged.preview.id) : false
+
+  const firstUnplacedTime = videoTimes.find((time) => !hasPosition(videoPoints[time]))
+  const firstIncompleteTime = videoTimes.find((time) => missingFields(videoPoints[time] ?? EMPTY_POINT).length > 0)
+  const videoTime = selectedVideoTime ?? firstUnplacedTime ?? firstIncompleteTime ?? videoTimes[0] ?? 0
+  const currentVideoPoint = videoPoints[videoTime] ?? EMPTY_POINT
+  const previousVideoTime = videoTimes[videoTimes.indexOf(videoTime) - 1]
+  const previousVideoPoint = videoPoints[previousVideoTime]
+  const nextVideoTime = videoTimes.find((time) => time > videoTime && (
+    time === firstUnplacedTime || hasPosition(videoPoints[time])
+      && missingFields(videoPoints[time]).length > 0
+  )) ?? firstIncompleteTime
+
+  useEffect(() => {
+    const player = videoRef.current
+    if (!player || readingLocations || !videoTimes.length) return
+    player.pause()
+    player.currentTime = videoTime / 1000
+  }, [readingLocations, videoTime, videoTimes])
+
+  useEffect(() => {
+    if (video) return () => URL.revokeObjectURL(video.url)
+  }, [video])
 
   useEffect(() => {
     if (open) return () => requestRef.current?.abort()
@@ -83,9 +118,14 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
     setDragging(false)
     setBatch(null)
     setBatchMode(false)
+    setVideo(null)
+    setReadingLocations(false)
+    setVideoTimes([])
+    setSelectedVideoTime(null)
+    setVideoPoints({})
   }, [open])
 
-  async function analyze(file: File) {
+  async function analyze(file: File, locations?: Record<number, CameraPoint>) {
     if (busy || requestRef.current) return
     if (!token) {
       setMessage('Inicia sessão para carregar imagens ou vídeos.')
@@ -104,6 +144,27 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
     const controller = new AbortController()
     requestRef.current = controller
     const { signal } = controller
+    if (isVideo && !locations) {
+      setMessage('')
+      setVideo({ file, url: URL.createObjectURL(file) })
+      setReadingLocations(true)
+      try {
+        const form = new FormData()
+        form.append('video', file)
+        const result = await api<{ locations: Record<number, CameraPoint> }>('/video-locations', {
+          method: 'POST', body: form, signal,
+        }, token)
+        if (!signal.aborted) setVideoPoints(result.locations)
+      } catch {
+        if (!signal.aborted) setMessage('Não foi possível ler a localização do vídeo. Podes indicá-la no mapa.')
+      } finally {
+        if (requestRef.current === controller) {
+          requestRef.current = null
+          if (!signal.aborted) setReadingLocations(false)
+        }
+      }
+      return
+    }
     setBusy(true)
     setMessage('')
     try {
@@ -121,7 +182,14 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
       })))
       if (!signal.aborted) {
         setPreviews(results)
-        setSelectedId(results[0].preview.id)
+        setSelectedId(results[0]?.preview.id ?? '')
+        if (locations) {
+          setPoints(Object.fromEntries(results.flatMap(({ preview, timestampMs }) => {
+            const location = timestampMs === undefined ? undefined : locations[timestampMs]
+            return location ? [[preview.id, location]] : []
+          })))
+          setVideo(null)
+        }
       }
     } catch (error) {
       if (!signal.aborted) setMessage(errorMessage(error))
@@ -198,15 +266,31 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
     }
   }
 
+  function loadVideo(duration: number) {
+    if (!Number.isFinite(duration) || duration <= 0 || duration > MAX_VIDEO_SECONDS) {
+      setMessage('Escolhe um vídeo com uma duração até 20 segundos.')
+      return
+    }
+    const times = []
+    for (let time = 0; time < duration * 1000; time += VIDEO_INTERVAL_MS) times.push(time)
+    setVideoTimes(times)
+  }
+
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
     setDragging(false)
     void analyzeFiles(Array.from(event.dataTransfer.files))
   }
 
-  async function publish() {
-    if (!staged || !point || !token || isPublished || busy || requestRef.current) return
-    if (missingFields(point).length > 0) {
+  const unpublishedFrames = previews.filter(({ preview, timestampMs }) =>
+    timestampMs !== undefined && !publishedIds.includes(preview.id))
+  const canPublishFrames = unpublishedFrames.every(({ preview }) =>
+    missingFields(points[preview.id] ?? preview.camera).length === 0)
+
+  async function publish(entries: Staged[]) {
+    if (!token || busy || requestRef.current || !entries.length) return
+    const payloads = entries.map(({ preview }) => ({ id: preview.id, point: points[preview.id] ?? preview.camera }))
+    if (payloads.some(({ point }) => missingFields(point).length > 0)) {
       setMessage('Indica a posição e a direção da câmara antes de publicar.')
       return
     }
@@ -215,31 +299,31 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
     const { signal } = controller
     setBusy(true)
     setMessage('')
+    let published = 0
     try {
-      await api(`/previews/${staged.preview.id}/publish`, {
-        method: 'POST',
-        signal,
-        body: JSON.stringify({
-          latitude: point.latitude,
-          longitude: point.longitude,
-          heading: point.heading,
-        }),
-      }, token)
-      if (signal.aborted) return
-      notify(isFrame ? 'Fotograma publicado. O mapa foi atualizado.' : 'Imagem publicada. O mapa foi atualizado.', 'success')
-      onPublished()
+      for (const { id, point } of payloads) {
+        await api(`/previews/${id}/publish`, {
+          method: 'POST', signal, body: JSON.stringify(point),
+        }, token)
+        if (signal.aborted) return
+        published += 1
+        if (isFrame) setPublishedIds((current) => [...current, id])
+      }
+      const confirmation = isFrame
+        ? published === 1 ? 'Fotograma publicado.' : `${published} fotogramas publicados.`
+        : 'Imagem publicada.'
+      notify(`${confirmation} O mapa foi atualizado.`, 'success')
       if (batchMode) {
-        const remaining = previews.filter(({ preview }) => preview.id !== staged.preview.id)
+        const remaining = previews.filter(({ preview }) => preview.id !== entries[0].preview.id)
         setPreviews(remaining)
         setSelectedId(remaining[0]?.preview.id ?? '')
-      } else if (isFrame) {
-        setPublishedIds((current) => [...current, staged.preview.id])
-      } else {
+      } else if (!isFrame) {
         onClose()
       }
     } catch (error) {
       if (!signal.aborted) setMessage(errorMessage(error))
     } finally {
+      if (published) onPublished()
       if (requestRef.current === controller) {
         requestRef.current = null
         if (!signal.aborted) setBusy(false)
@@ -248,6 +332,8 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
   }
 
   function reset() {
+    requestRef.current?.abort()
+    requestRef.current = null
     setPreviews([])
     setSelectedId('')
     setPoints({})
@@ -255,6 +341,11 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
     setMessage('')
     setBatch(null)
     setBatchMode(false)
+    setVideo(null)
+    setReadingLocations(false)
+    setVideoTimes([])
+    setSelectedVideoTime(null)
+    setVideoPoints({})
     if (inputRef.current) inputRef.current.value = ''
   }
 
@@ -277,7 +368,7 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
         </div>
       )}
 
-      {token && !staged && !batch && (
+      {token && !staged && !batch && !video && (
         <div
           className={`dropzone${dragging ? ' is-dragging' : ''}${busy ? ' is-busy' : ''}`}
           onDragOver={(event) => { event.preventDefault(); setDragging(true) }}
@@ -303,12 +394,76 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
           {busy ? <p>A detetar mobiliário urbano e a desfocar rostos e matrículas.</p> : (
             <>
               <p>Fotos JPEG, PNG ou WebP até 12 MiB</p>
-              <p>Vídeos MP4, MOV ou WebM até 50 MiB e 20 segundos. Analisamos até quatro fotogramas.</p>
+              <p>Vídeos MP4, MOV ou WebM até 50 MiB e 20 segundos. Analisamos um fotograma a cada quatro segundos.</p>
             </>
           )}
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => inputRef.current?.click()}>
             <i className="bi bi-folder2-open" aria-hidden="true" /> Escolher ficheiros
           </button>
+        </div>
+      )}
+
+      {token && video && (
+        <div className="upload-review">
+          <div className="upload-review__media">
+            <div className="upload-review__image">
+              <video ref={videoRef} src={video.url} controls playsInline preload="metadata"
+                onLoadedMetadata={(event) => loadVideo(event.currentTarget.duration)}
+                onError={() => {
+                  setVideoTimes([])
+                  setMessage('Não foi possível reproduzir o vídeo neste navegador. Experimenta um MP4 com H.264.')
+                }} />
+            </div>
+            {videoTimes.length > 0 && (
+              <div className="video-steps" role="group" aria-label="Posições ao longo do vídeo">
+                {videoTimes.map((time) => {
+                  const placed = hasPosition(videoPoints[time])
+                  const locked = firstUnplacedTime !== undefined && time > firstUnplacedTime
+                  const status = locked ? 'A aguardar a posição anterior' : placed ? (
+                    videoPoints[time].heading === null ? 'Falta a direção' : 'Definida'
+                  ) : 'Por marcar'
+                  return (
+                    <button key={time} type="button"
+                      className={`video-step${placed ? ' is-placed' : ''}`}
+                      aria-current={time === videoTime ? 'step' : undefined}
+                      disabled={locked || busy || readingLocations}
+                      onClick={() => setSelectedVideoTime(time)}>
+                      <strong>{time / 1000} s</strong>
+                      <small>{status}</small>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          <div className="upload-review__side">
+            <div className="upload-review__heading">
+              <h3>Onde estava a câmara aos {videoTime / 1000} s?</h3>
+              <p>Marca a posição no mapa e ajusta a direção da câmara antes de avançar.</p>
+            </div>
+            {readingLocations && <p role="status">A procurar dados de localização no vídeo…</p>}
+            {videoTimes.length > 0 && !busy && !readingLocations && (
+              <LocationPicker key={videoTime} value={currentVideoPoint} previousPoint={previousVideoPoint}
+                onChange={(next) => {
+                  setSelectedVideoTime(videoTime)
+                  setVideoPoints((current) => ({ ...current, [videoTime]: next }))
+                }} height={270} />
+            )}
+            <div className="upload-review__actions">
+              <button type="button" className="btn btn-ghost" onClick={reset} disabled={busy}>Trocar vídeo</button>
+              {nextVideoTime !== undefined && nextVideoTime !== videoTime ? (
+                <button type="button" className="btn btn-primary" disabled={busy || readingLocations || missingFields(currentVideoPoint).length > 0}
+                  onClick={() => setSelectedVideoTime(nextVideoTime)}>
+                  {nextVideoTime > videoTime ? 'Avançar' : 'Rever instante anterior'} · {nextVideoTime / 1000} s
+                </button>
+              ) : (
+                <button type="button" className="btn btn-primary" onClick={() => void analyze(video.file, videoPoints)}
+                  disabled={busy || readingLocations || !videoTimes.length || firstIncompleteTime !== undefined}>
+                  {busy ? 'A analisar os fotogramas…' : `Analisar fotogramas (${videoTimes.length})`}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -406,12 +561,18 @@ export function UploadDialog({ open, onClose, token, onPublished, notify }: {
             )}
             <div className="upload-review__actions">
               <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>{isFrame ? 'Fechar' : 'Cancelar'}</button>
-              <button type="button" className="btn btn-primary" onClick={() => void publish()}
+              <button type="button" className="btn btn-primary" onClick={() => void publish([staged])}
                 disabled={busy || isPublished || missing.length > 0}>
                 <i className="bi bi-cloud-arrow-up-fill" aria-hidden="true" />
                 {isPublished ? 'Publicado' : busy ? 'A publicar…' : isFrame ? 'Publicar fotograma' : 'Publicar no mapa'}
               </button>
             </div>
+            {isFrame && unpublishedFrames.length > 1 && (
+              <button type="button" className="btn btn-primary" onClick={() => void publish(unpublishedFrames)}
+                disabled={busy || !canPublishFrames}>
+                Publicar todos os fotogramas ({unpublishedFrames.length})
+              </button>
+            )}
           </div>
         </div>
       )}

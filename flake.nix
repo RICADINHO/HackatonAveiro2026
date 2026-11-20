@@ -35,6 +35,7 @@
               python312
               stdenv.cc.cc.lib
               zlib
+              exiftool
 
               # Node / React / GitHub Pages tooling
               nodejs_26

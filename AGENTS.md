@@ -95,7 +95,7 @@ Notes:
 
 ## 3. First-time setup
 
-Prerequisites: Nix (recommended) or Node ≥ 22, Python 3.12, uv, PostgreSQL with PostGIS.
+Prerequisites: Nix (recommended) or Node ≥ 22, Python 3.12, uv, PostgreSQL with PostGIS. ExifTool on the server PATH enables embedded video GPS extraction and is included in the Nix shell.
 
 On Windows or Docker, follow [`server/README.md`](server/README.md) for PostgreSQL/PostGIS and run the commands with the venv or container Python; §11 lists the cross-platform pitfalls.
 
@@ -225,7 +225,8 @@ Entry point: `server/app/__main__.py` → `Settings.from_env()` → `create_app(
 | GET | `/items/{id}` | public | Item detail with its images and detections |
 | GET | `/images` | technician | All published images |
 | POST | `/previews` | user | Detect furniture, anonymize, and return `{id, camera, detections}` |
-| POST | `/video-previews` | user | Analyze up to four video frames; return `{frames: [{id, camera, detections, timestamp_ms}]}` |
+| POST | `/video-locations` | user | Read embedded video GPS and camera heading for the scheduled timestamps |
+| POST | `/video-previews` | user | Analyze video frames at four-second intervals; return `{frames: [{id, camera, detections, timestamp_ms}]}` |
 | GET | `/previews/{id}/image` | owner | Blurred staged JPEG |
 | POST | `/previews/{id}/publish` | owner | Publish with manual `{latitude, longitude, heading}` |
 | GET | `/published/{id}` | user | 204 probe used to detect already-published previews |
@@ -247,7 +248,7 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 4. The client shows the blurred image with detection boxes and asks for position + heading (map picker or GPS).
 5. `POST /api/previews/{id}/publish` moves the file to `images/public/`, inserts the image and detections, and creates/merges items in one transaction.
 
-`POST /api/video-previews` takes MP4, MOV or WebM (50 MiB and 20 seconds maximum). It samples up to four frames and runs the shared image pipeline. GPS is entered separately for each frame. Only anonymized JPEG previews enter the existing preview and publication workflow, and the temporary source video is removed after sampling.
+`POST /api/video-previews` takes MP4, MOV or WebM (50 MiB and 20 seconds maximum). It samples at 0, 4, 8, 12 and 16 seconds for a full-length clip and runs the shared image pipeline. The upload dialog collects camera locations and headings against those timestamps before sending the video for analysis. Before analysis, the dialog calls `/api/video-locations` to prefill the initial camera point from clip-level metadata or interpolate embedded GPS samples at the scheduled timestamps. Missing coordinates or camera headings can be entered manually. Only anonymized JPEG previews enter the existing preview and publication workflow, and the temporary source video is removed after sampling.
 
 ### Projection and dedupe
 
@@ -286,7 +287,7 @@ Single-page app. No router: `App.tsx` owns view state and opens dialogs/drawers.
 - **Filter panel** (`FilterPanel.tsx`): category chips plus a scrollable "Tipos detetados" list that toggles individual `class_name` values, so subtypes such as bins and sign types can be shown or hidden independently.
 - **Location picker** (`LocationPicker.tsx`): reusable Leaflet map used for uploads and technician corrections. Click sets the camera point, a draggable arrow sets heading, a 65° FOV wedge visualizes the view. Also supports GPS and recentring. Heading is `[0, 360)`.
 - **Item drawer** (`ItemDrawer.tsx`): item metadata, image gallery/lightbox, uploader name, detections, and technician edit/move/delete controls.
-- **Upload** (`UploadDialog.tsx`): uses `/previews` for images or `/video-previews` for videos. Users can select and publish individual video frames. Multiple selected photos are processed sequentially; photos with GPS and heading are published automatically, and the rest remain available for manual review. Location and heading are mandatory for each publication.
+- **Upload** (`UploadDialog.tsx`): uses `/previews` for images or `/video-previews` for videos. Users assign the camera position and heading at each scheduled timestamp using local video playback and ordered timestamp buttons. Setup begins at the first missing position and shows a map guide from the previous position when available. Users can revisit filled timestamps, then review the analyzed frames and publish them individually or together. Multiple selected photos are processed sequentially; photos with GPS and heading are published automatically, and the rest remain available for manual review. Location and heading are mandatory for each publication.
 - **Reports** (`ReportsDialog.tsx`): create reports (optionally tied to an item); technicians can resolve.
 - **Auth** (`AuthDialog.tsx` + `supabase.ts`): email/password sign-in/sign-up; the access token is passed to `api()`.
 - **Theme** (`theme.tsx`): light/dark, persisted in `localStorage`, applied before paint by an inline script in `index.html`.

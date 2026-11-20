@@ -18,7 +18,7 @@
 		respond 404
 	}
 
-	@video path /api/video-previews /video-previews
+	@video path /api/video-previews /video-previews /api/video-locations /video-locations
 	handle @video {
 		request_body {
 			max_size 53477376

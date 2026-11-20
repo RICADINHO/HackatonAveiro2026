@@ -47,8 +47,9 @@ function handleIcon() {
   })
 }
 
-export function LocationPicker({ value, onChange, height = 250, showHeading = true, className = '' }: {
+export function LocationPicker({ value, onChange, height = 250, showHeading = true, className = '', previousPoint }: {
   value: CameraPoint
+  previousPoint?: CameraPoint
   onChange: (next: CameraPoint) => void
   height?: number
   showHeading?: boolean
@@ -63,11 +64,13 @@ export function LocationPicker({ value, onChange, height = 250, showHeading = tr
   const wedgeRef = useRef<L.Polygon | null>(null)
   const lineRef = useRef<L.Polyline | null>(null)
   const draggingRef = useRef(false)
+  const previousPointRef = useRef(previousPoint)
   const valueRef = useRef(value)
   const onChangeRef = useRef(onChange)
   const [geoBusy, setGeoBusy] = useState(false)
   const [geoError, setGeoError] = useState('')
 
+  previousPointRef.current = previousPoint
   valueRef.current = value
   onChangeRef.current = onChange
 
@@ -124,12 +127,16 @@ export function LocationPicker({ value, onChange, height = 250, showHeading = tr
     if (!container) return
 
     const hasPoint = valueRef.current.latitude !== null && valueRef.current.longitude !== null
+    const previous = previousPointRef.current
+    const previousCenter = previous && previous.latitude !== null && previous.longitude !== null
+      ? L.latLng(previous.latitude, previous.longitude)
+      : null
     const center = hasPoint
       ? L.latLng(valueRef.current.latitude!, valueRef.current.longitude!)
-      : L.latLng(AVEIRO)
+      : previousCenter ?? L.latLng(AVEIRO)
     const map = L.map(container, {
       center,
-      zoom: hasPoint ? 16 : 14,
+      zoom: previousCenter ? 18 : hasPoint ? 16 : 14,
       zoomControl: true,
       attributionControl: true,
     })
@@ -141,6 +148,22 @@ export function LocationPicker({ value, onChange, height = 250, showHeading = tr
       attribution: MAP_ATTRIBUTION,
     }).addTo(map)
     tileRef.current = tiles
+
+    if (previousCenter) {
+      const guide = L.polyline([], {
+        color: 'var(--accent)', weight: 3, dashArray: '5 6', interactive: false,
+      }).addTo(map)
+      L.circleMarker(previousCenter, {
+        radius: 6, color: 'var(--accent)', fillColor: 'var(--surface-3)', fillOpacity: 1,
+      }).addTo(map).bindTooltip('Posição anterior')
+      const heading = previous?.heading
+      if (heading != null) {
+        const updateGuide = () => guide.setLatLngs([previousCenter, pixelOffset(map, previousCenter, heading, 72)])
+        updateGuide()
+        map.on('zoomend', updateGuide)
+        if (!hasPoint) map.panTo(pixelOffset(map, previousCenter, heading, 48), { animate: false })
+      }
+    }
 
     const wedge = L.polygon([], {
       color: 'var(--accent)',
@@ -186,7 +209,7 @@ export function LocationPicker({ value, onChange, height = 250, showHeading = tr
         ...current,
         latitude: Number(event.latlng.lat.toFixed(6)),
         longitude: Number(event.latlng.lng.toFixed(6)),
-        heading: current.heading ?? 0,
+        heading: current.heading ?? previous?.heading ?? 0,
       })
     })
     map.on('zoomend', render)

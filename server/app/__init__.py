@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from .. import inventory
 from ..anonymization import AnonymizationError
 from ..imaging import MAX_IMAGE_BYTES, DetectorError, prepare_frame, prepare_photo
-from ..video import MAX_VIDEO_BYTES, VideoInputError, read_video_samples
+from ..video import MAX_VIDEO_BYTES, VideoInputError, read_video_locations, read_video_samples
 from .config import Settings
 
 logger = logging.getLogger(__name__)
@@ -258,14 +258,27 @@ def create_app(settings: Settings):
             raise HTTPException(422, 'A imagem não pôde ser lida.') from exc
         return preview
 
-    @api.post('/video-previews', status_code=201)
-    def create_video_previews(user: Annotated[Principal, Depends(authenticated)], video: Annotated[UploadFile, File()]):
+    def video_suffix(video: UploadFile) -> str:
         video.file.seek(0, os.SEEK_END)
         if video.file.tell() > MAX_VIDEO_BYTES:
             raise HTTPException(413, 'O limite por vídeo é 50 MiB.')
         video.file.seek(0)
+        return Path(video.filename or '').suffix.lower()
+
+    @api.post('/video-locations')
+    def video_locations(user: Annotated[Principal, Depends(authenticated)], video: Annotated[UploadFile, File()]):
+        suffix = video_suffix(video)
         try:
-            samples = read_video_samples(video.file, Path(video.filename or '').suffix.lower())
+            locations = read_video_locations(video.file, suffix)
+        except VideoInputError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {'locations': locations}
+
+    @api.post('/video-previews', status_code=201)
+    def create_video_previews(user: Annotated[Principal, Depends(authenticated)], video: Annotated[UploadFile, File()]):
+        suffix = video_suffix(video)
+        try:
+            samples = read_video_samples(video.file, suffix)
         except VideoInputError as exc:
             raise HTTPException(422, str(exc)) from exc
 
@@ -422,7 +435,7 @@ def create_app(settings: Settings):
     @app.api_route('/{path:path}', methods=['GET', 'HEAD'], include_in_schema=False)
     def frontend(path: str):
         namespace = path.partition('/')[0]
-        if namespace in {'api', 'img', 'items', 'images', 'published', 'previews', 'video-previews', 'reports', 'me'} or any(
+        if namespace in {'api', 'img', 'items', 'images', 'published', 'previews', 'video-previews', 'video-locations', 'reports', 'me'} or any(
             part.startswith('.') for part in Path(path).parts
         ):
             raise HTTPException(404)

@@ -157,9 +157,9 @@ Antes do desfoque, os classificadores em `yolo/` analisam cada recorte de um sin
 
 ### Carregar um vídeo
 
-Em **Carregar foto ou vídeo**, escolhe um MP4, MOV ou WebM até **20 segundos e 50 MiB**. O servidor usa o OpenCV com FFmpeg para extrair até quatro fotogramas. Para cada fotograma, aplica a mesma deteção, classificação e anonimização das fotografias.
+Em **Carregar foto ou vídeo**, escolhe um MP4, MOV ou WebM até **20 segundos e 50 MiB**. O servidor usa o OpenCV com FFmpeg para extrair um fotograma a cada quatro segundos, a partir do início (até cinco por vídeo). Para cada fotograma, aplica a mesma deteção, classificação e anonimização das fotografias.
 
-Escolhe um fotograma pela indicação de tempo. Marca a posição e a direção da câmara para esse instante e publica o fotograma no mapa. Podes repetir para outros fotogramas do mesmo vídeo. O servidor usa a informação de posição que indicas para cada um e conserva apenas os JPEG anonimizados para pré-visualização e publicação. Se o vídeo der um erro de descodificação, experimenta exportá-lo em MP4 com H.264.
+Antes de iniciar a análise, confirma a posição e a direção da câmara em cada instante no leitor de vídeo. Com o ExifTool no PATH do servidor (incluído em `nix develop`), a aplicação preenche o primeiro instante com a localização geral do vídeo ou usa os pontos GPS com marca temporal para preencher o percurso. Quando o vídeo inclui a direção da câmara, a aplicação também pode preenchê-la. Completa no mapa os campos em falta. Depois de rever os fotogramas anonimizados, podes publicá-los individualmente ou todos de uma vez. O servidor usa a informação de posição que indicas para cada um e conserva apenas os JPEG anonimizados para pré-visualização e publicação. Se o vídeo der um erro de descodificação, experimenta exportá-lo em MP4 com H.264.
 
 ### Exportar o inventário
 

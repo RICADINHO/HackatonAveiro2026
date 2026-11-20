@@ -20,7 +20,7 @@ from psycopg.conninfo import make_conninfo
 from server.app import Settings, create_app
 from server.anonymization import AnonymizationError, anonymize
 from server.imaging import Detection, classify_detections, detect, prepare_photo
-from server.video import VideoInputError, read_video_samples
+from server.video import VideoInputError, _camera_samples, read_video_samples
 
 
 def write_video(path: Path, seconds: int):
@@ -35,15 +35,15 @@ def write_video(path: Path, seconds: int):
 
 
 class VideoSampling(unittest.TestCase):
-    def test_decodes_at_most_four_distinct_samples(self):
+    def test_decodes_five_distinct_samples_from_an_eighteen_second_video(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / 'sample.mp4'
-            write_video(path, seconds=12)
+            write_video(path, seconds=18)
             with path.open('rb') as video:
                 samples = read_video_samples(video, '.mp4')
-            self.assertEqual([timestamp for timestamp, _ in samples], [0, 3000, 6000, 9000])
+            self.assertEqual([timestamp for timestamp, _ in samples], [0, 4000, 8000, 12000, 16000])
             self.assertTrue(all(frame.size == (160, 120) and frame.mode == 'RGB' for _, frame in samples))
-            self.assertEqual(len({frame.getpixel((10, 10)) for _, frame in samples}), 4)
+            self.assertEqual(len({frame.getpixel((10, 10)) for _, frame in samples}), 5)
 
     def test_rejects_long_and_invalid_videos(self):
         with TemporaryDirectory() as directory:
@@ -53,6 +53,30 @@ class VideoSampling(unittest.TestCase):
                 read_video_samples(video, '.mp4')
         with self.assertRaises(VideoInputError):
             read_video_samples(BytesIO(b'not a video'), '.webm')
+
+
+class VideoLocations(unittest.TestCase):
+    def test_clip_wide_gps_fills_only_the_initial_position(self):
+        self.assertEqual(_camera_samples({'Main:GPSCoordinates': '40.6163 -8.6338 20'}), {
+            0: {'latitude': 40.6163, 'longitude': -8.6338, 'heading': None},
+        })
+
+    def test_interpolates_timed_positions_and_camera_directions(self):
+        metadata = {
+            'Main:GPSCoordinates': '41 -9',
+            'Doc1:SampleTime': 0,
+            'Doc1:GPSLatitude': 40,
+            'Doc1:GPSLongitude': -8,
+            'Doc1:GPSImgDirection': 350,
+            'Doc2:SampleTime': 8,
+            'Doc2:GPSLatitude': 42,
+            'Doc2:GPSLongitude': -10,
+            'Doc2:GPSImgDirection': 10,
+        }
+        locations = _camera_samples(metadata)
+        self.assertEqual(locations[0], {'latitude': 40, 'longitude': -8, 'heading': 350})
+        self.assertEqual(locations[4000], {'latitude': 41, 'longitude': -9, 'heading': 0})
+        self.assertEqual(locations[8000], {'latitude': 42, 'longitude': -10, 'heading': 10})
 
 
 class CameraMetadata(unittest.TestCase):
@@ -264,7 +288,7 @@ class InventoryWorkflow(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             media = root / 'source.mp4'
-            write_video(media, seconds=4)
+            write_video(media, seconds=5)
             files = {'video': ('source.mp4', media.read_bytes(), 'video/mp4')}
             settings = Settings(self.dsn, 'https://test.supabase.co', 'test-key', root)
             with (
@@ -273,6 +297,12 @@ class InventoryWorkflow(unittest.TestCase):
                 patch('server.imaging.anonymize', side_effect=[Image.new('RGB', (160, 120)), AnonymizationError]),
                 TestClient(create_app(settings)) as client,
             ):
+                self.assertEqual(client.post('/api/video-locations', files=files).status_code, 401)
+                locations = {0: coordinates}
+                with patch('server.app.read_video_locations', return_value=locations):
+                    result = client.post('/api/video-locations', headers=owner_headers, files=files)
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(result.json(), {'locations': {'0': coordinates}})
                 self.assertEqual(client.post('/api/video-previews', files=files).status_code, 401)
                 self.assertEqual(client.post('/api/video-previews', headers=owner_headers, files=files).status_code, 503)
                 self.assertEqual(list((root / 'images/private').glob('*')), [])
@@ -281,7 +311,7 @@ class InventoryWorkflow(unittest.TestCase):
                     result = client.post('/api/video-previews', headers=owner_headers, files=files)
                 self.assertEqual(result.status_code, 201, result.text)
                 first, second = result.json()['frames']
-                self.assertEqual([first['timestamp_ms'], second['timestamp_ms']], [0, 2000])
+                self.assertEqual([first['timestamp_ms'], second['timestamp_ms']], [0, 4000])
                 self.assertEqual(first['camera'], dict.fromkeys(coordinates))
                 self.assertEqual(second['camera'], dict.fromkeys(coordinates))
                 self.assertEqual(first['detections'][0]['class_name'], 'stop')
