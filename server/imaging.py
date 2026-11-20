@@ -1,8 +1,9 @@
 import logging
 from dataclasses import asdict, dataclass, replace
+from datetime import date, datetime
 from functools import cache
 from io import BytesIO
-from math import ceil
+from math import ceil, isfinite
 from pathlib import Path
 from threading import Lock
 
@@ -237,21 +238,101 @@ def gps_coordinate(value, reference, positive, negative, limit):
     return None
 
 
+def _capture_date(exif, gps) -> date | None:
+    """Read capture date, preferring GPS UTC date over camera-local EXIF dates."""
+    for value in (gps.get(29), exif.get(36867), exif.get(36868)):
+        if isinstance(value, bytes):
+            value = value.decode('ascii', errors='ignore')
+        if not isinstance(value, str):
+            continue
+        value = value.strip(' \x00')[:10]
+        for date_format in ('%Y:%m:%d', '%Y-%m-%d'):
+            try:
+                return datetime.strptime(value, date_format).date()
+            except ValueError:
+                pass
+    return None
+
+
+def _decimal_year(capture_date: date) -> float:
+    year_start = date(capture_date.year, 1, 1)
+    next_year = date(capture_date.year + 1, 1, 1)
+    return capture_date.year + (capture_date - year_start).days / (next_year - year_start).days
+
+
+def _gps_altitude_km(gps) -> float:
+    """Return EXIF GPS altitude in kilometres, signed and safe for WMM."""
+    try:
+        altitude = float(gps.get(6, 0))
+        reference = gps.get(5, 0)
+        if isinstance(reference, bytes):
+            reference = reference[0] if reference else 0
+        if int(reference) == 1:
+            altitude = -altitude
+        altitude /= 1000
+        return altitude if -1 <= altitude <= 850 else 0.0
+    except (TypeError, ValueError, ZeroDivisionError, IndexError):
+        return 0.0
+
+
+def _magnetic_declination(latitude: float, longitude: float, altitude_km: float,
+                          capture_date: date) -> float:
+    """Calculate east-positive magnetic declination with the date-appropriate WMM."""
+    from pygeomag import GeoMag
+
+    model = GeoMag(base_year=capture_date.year)
+    result = model.calculate(
+        glat=latitude,
+        glon=longitude,
+        alt=altitude_km,
+        time=_decimal_year(capture_date),
+    )
+    return float(result.d)
+
+
 def read_camera(image):
     try:
-        gps = image.getexif().get_ifd(ExifTags.IFD.GPSInfo)
+        exif = image.getexif()
+        gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
     except (ValueError, TypeError, OSError, SyntaxError, IndexError, KeyError):
+        exif = {}
         gps = {}
+
+    latitude = gps_coordinate(gps.get(2), gps.get(1), 'N', 'S', 90)
+    longitude = gps_coordinate(gps.get(4), gps.get(3), 'E', 'W', 180)
+
     try:
         heading = float(gps.get(17))  # GPSImgDirection, as opposed to GPSTrack
-        # Magnetic headings need correction before use with geographic bearings.
-        if not 0 <= heading < 360 or gps.get(16) not in ('T', b'T'):
+        reference = gps.get(16)
+        if isinstance(reference, bytes):
+            reference = reference.decode('ascii', errors='ignore')
+        if not 0 <= heading < 360:
+            heading = None
+        elif reference == 'M':
+            capture_date = _capture_date(exif, gps)
+            if latitude is None or longitude is None or capture_date is None:
+                logger.warning('Magnetic camera heading needs GPS coordinates and capture date; ignoring it.')
+                heading = None
+            else:
+                try:
+                    declination = _magnetic_declination(
+                        latitude, longitude, _gps_altitude_km(gps), capture_date,
+                    )
+                    if not isfinite(declination):
+                        raise ValueError('WMM returned a non-finite declination')
+                    # WMM declination is positive east: true = magnetic + declination.
+                    heading = (heading + declination) % 360
+                except Exception:
+                    logger.exception('Could not convert magnetic camera heading to true north.')
+                    heading = None
+        elif reference != 'T':
             heading = None
     except (ValueError, TypeError, ZeroDivisionError):
         heading = None
+
     return {
-        'latitude': gps_coordinate(gps.get(2), gps.get(1), 'N', 'S', 90),
-        'longitude': gps_coordinate(gps.get(4), gps.get(3), 'E', 'W', 180),
+        'latitude': latitude,
+        'longitude': longitude,
         'heading': heading,
     }
 

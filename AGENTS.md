@@ -52,7 +52,7 @@ The FastAPI process serves the built SPA, the API, and the images from one origi
 │   │   ├── __init__.py        ← FastAPI app, routes, auth, upload/publish logic
 │   │   ├── __main__.py        ← CLI entry point (--host, --port, --data-dir)
 │   │   └── config.py          ← settings, hardcoded Supabase/CORS/dedup values
-│   ├── imaging.py             ← EXIF, YOLO detection, JPEG preparation, projection
+│   ├── imaging.py             ← EXIF, WMM magnetic correction, YOLO detection, projection
 │   ├── anonymization.py       ← face and plate detection, blur and pixelation
 │   ├── inventory.py           ← SQL for items/images/detections, dedupe, recompute
 │   ├── migrations/001_inventory.sql
@@ -234,7 +234,7 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 ### Upload → publish flow
 
 1. `POST /api/previews` receives one image (max 12 MiB, JPEG/PNG/WebP).
-2. `imaging.prepare_photo` reads EXIF GPS/heading, applies EXIF orientation, detects and classifies furniture, and passes the image to `anonymization.anonymize`. It strips metadata and writes the anonymized JPEG to `images/private/<preview-id>.jpg` only after both privacy models succeed.
+2. `imaging.prepare_photo` reads EXIF GPS/heading, converts `GPSImgDirectionRef = M` to true-north heading with `pygeomag` (WMM, selected from capture date), applies EXIF orientation, detects and classifies furniture, and passes the image to `anonymization.anonymize`. Magnetic heading is left unset when GPS coordinates/date are missing or WMM cannot calculate it. It strips metadata and writes the anonymized JPEG to `images/private/<preview-id>.jpg` only after both privacy models succeed.
 3. The preview row stores `metadata` (camera) and `detections` for 30 minutes.
 4. The client shows the blurred image with detection boxes and asks for position + heading (map picker or GPS).
 5. `POST /api/previews/{id}/publish` moves the file to `images/public/`, inserts the image and detections, and creates/merges items in one transaction.
@@ -243,6 +243,7 @@ Images are served from `/img/{image-id}.jpg` (not under `/api`). CORS is only ne
 
 `server/imaging.py`:
 
+- `read_camera()` accepts true-north (`T`) headings directly. Magnetic-north (`M`) headings are converted to true north using `pygeomag` and the World Magnetic Model for the capture year; this requires GPS coordinates and a capture date. If conversion is unavailable, heading remains unset so the user can set it manually.
 - `projection(heading, bbox)` estimates distance/bearing from the normalized detection box (horizontal offset → bearing, box size/vertical position → distance). It is a **best guess**, not calibrated.
 - `detect()` runs `yolo/detector_3classes.pt` in CPU mode before redaction and checks overlapping tiles for small signs and bins. With `yoloe-26s-seg.pt` in `<data-dir>/models`, it adds a full-image YOLOE pass using the bundled prompt embeddings. The detector normalizes the boxes and suppresses duplicates within each category.
 - `anonymization.anonymize()` runs RetinaFace ResNet34 (0.30) and YOLOv9-S 608 (0.25) via ONNX Runtime. It combines boxes from both, pads them, and applies Gaussian blur and pixelation. Anonymization failures return 503 and leave no staged preview.

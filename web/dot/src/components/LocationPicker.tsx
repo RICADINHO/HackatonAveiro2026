@@ -38,10 +38,10 @@ function cameraIcon() {
   })
 }
 
-function handleIcon() {
+function handleIcon(heading: number, disabled = false) {
   return L.divIcon({
-    className: 'picker-marker picker-marker--handle',
-    html: '<span class="picker-handle"><i class="bi bi-caret-up-fill"></i></span>',
+    className: `picker-marker picker-marker--handle${disabled ? ' is-disabled' : ''}`,
+    html: `<span class="picker-handle" style="--heading:${heading}deg"><i class="bi bi-caret-up-fill"></i></span>`,
     iconSize: [30, 30],
     iconAnchor: [15, 15],
   })
@@ -87,10 +87,7 @@ export function LocationPicker({ value, onChange, height = 250, showHeading = tr
     handle.setOpacity(headingActive ? 1 : 0)
     if (headingActive) handle.dragging?.enable()
     else handle.dragging?.disable()
-    // Replacing the icon during a drag resets Leaflet's drag handler.
-    const handleElement = handle.getElement()
-    handleElement?.style.setProperty('--heading', `${heading ?? 0}deg`)
-    handleElement?.classList.toggle('is-disabled', !headingActive)
+    handle.setIcon(handleIcon(heading ?? 0, !headingActive))
 
     if (!hasPoint) {
       wedge.setLatLngs([])
@@ -163,10 +160,9 @@ export function LocationPicker({ value, onChange, height = 250, showHeading = tr
     const camera = L.marker(center, { icon: cameraIcon(), keyboard: false, interactive: false }).addTo(map)
     cameraRef.current = camera
 
-    const handle = L.marker(center, { icon: handleIcon(), draggable: true, autoPan: true, keyboard: false }).addTo(map)
+    const handle = L.marker(center, { icon: handleIcon(0), draggable: true, autoPan: true, keyboard: false }).addTo(map)
     handleRef.current = handle
 
-    handle.on('click', (event: L.LeafletMouseEvent) => L.DomEvent.stopPropagation(event.originalEvent))
     handle.on('dragstart', () => { draggingRef.current = true })
     handle.on('drag', () => {
       const current = valueRef.current
@@ -204,7 +200,6 @@ export function LocationPicker({ value, onChange, height = 250, showHeading = tr
       tileRef.current = null
       cameraRef.current = null
       handleRef.current = null
-      draggingRef.current = false
       wedgeRef.current = null
       lineRef.current = null
     }

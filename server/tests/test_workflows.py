@@ -1,6 +1,7 @@
 import os
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,10 +17,50 @@ from psycopg.conninfo import make_conninfo
 
 from server.app import Settings, create_app
 from server.anonymization import AnonymizationError, anonymize
-from server.imaging import Detection, classify_detections, detect, prepare_photo
+from server.imaging import Detection, classify_detections, detect, prepare_photo, read_camera
 
 
 class CameraMetadata(unittest.TestCase):
+    @staticmethod
+    def read_camera_from_gps(gps, metadata=None):
+        exif = Image.Exif()
+        exif[34853] = gps
+        for tag, value in (metadata or {}).items():
+            exif[tag] = value
+        source = BytesIO()
+        Image.new('RGB', (32, 32)).save(source, format='JPEG', exif=exif)
+        source.seek(0)
+        with Image.open(source) as image:
+            return read_camera(image)
+
+    def test_converts_magnetic_heading_using_capture_location_date_and_altitude(self):
+        gps = {
+            1: 'N', 2: (IFDRational(40), IFDRational(37), IFDRational(1.62)),
+            3: 'W', 4: (IFDRational(8), IFDRational(37), IFDRational(42.19)),
+            5: 0, 6: IFDRational(968, 10),
+            16: 'M', 17: IFDRational(196), 29: '2026:11:19',
+        }
+        with patch('server.imaging._magnetic_declination', return_value=-1.25) as declination:
+            camera = self.read_camera_from_gps(gps)
+        self.assertAlmostEqual(camera['latitude'], 40.6171166667)
+        self.assertAlmostEqual(camera['longitude'], -8.6283861111)
+        self.assertAlmostEqual(camera['heading'], 194.75)
+        declination.assert_called_once_with(
+            camera['latitude'], camera['longitude'], 0.0968, date(2026, 11, 19),
+        )
+
+    def test_keeps_true_north_heading_without_magnetic_correction(self):
+        gps = {16: 'T', 17: IFDRational(196)}
+        with patch('server.imaging._magnetic_declination') as declination:
+            camera = self.read_camera_from_gps(gps)
+        self.assertEqual(camera['heading'], 196)
+        declination.assert_not_called()
+
+    def test_does_not_treat_magnetic_heading_as_true_without_date_or_position(self):
+        gps = {16: 'M', 17: IFDRational(196)}
+        camera = self.read_camera_from_gps(gps)
+        self.assertIsNone(camera['heading'])
+
     def test_extracts_exif_and_removes_it_from_output(self):
         exif = Image.Exif()
         exif[34853] = {
