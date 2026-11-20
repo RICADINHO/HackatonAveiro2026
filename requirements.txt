@@ -3,6 +3,7 @@ python-dotenv
 requests
 mapbox-vector-tile
 pillow>=10
+piexif
 
 fastapi>=0.115
 pydantic>=2

@@ -8,11 +8,18 @@ Outputs, under Datasets/mapillary/data/:
   detections.jsonl      per-(feature, image) bbox/polygon in image space
   images/<id>.jpg       1024px thumbnails (only with --images)
   raw_<bbox>.json       raw map-feature response cache (keyed by bbox)
+
+With --exif, GPS coordinates and compass direction from the API are written
+into the EXIF of each downloaded JPEG. Re-running patches existing files
+without re-downloading. EXIF injection uses piexif first (verified), and
+falls back to exiftool if piexif silently no-ops on Facebook CDN JPEGs.
 """
 import argparse
 import base64
+import io
 import json
 import os
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -21,6 +28,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 import mapbox_vector_tile
+import piexif
 import requests
 from dotenv import load_dotenv
 
@@ -31,15 +39,18 @@ OUT = Path(__file__).parent / "data"
 CELL = 0.009  # degrees; API requires bbox smaller than 0.01 degrees square
 LIMIT = 2000  # API max per request; bbox search has no paging, so split on hit
 
-# west, south, east, north (approximate, adjust as needed)
+# Test cap on the image download + EXIF phase. Metadata (images.jsonl,
+# detections.jsonl, map_features.geojson) is still written for ALL features.
+# Set to None to unblock the full download.
+MAX_IMAGES = None
+
 REGIONS = {
-    "pilot": (-8.6524, 40.6407, -8.6476, 40.6443),  # ~400 m, city centre
-    "centre": (-8.670, 40.625, -8.630, 40.660),     # Aveiro city centre
-    "aveiro": (-8.76, 40.55, -8.50, 40.72),        # Aveiro municipality
-    "district": (-8.98, 40.35, -7.95, 41.05),      # Aveiro district
+    "pilot": (-8.6524, 40.6407, -8.6476, 40.6443),
+    "centre": (-8.670, 40.625, -8.630, 40.660),
+    "aveiro": (-8.76, 40.55, -8.50, 40.72),
+    "district": (-8.98, 40.35, -7.95, 41.05),
 }
 
-# Mapillary object_value patterns per challenge category (wildcards supported)
 VALUES = {
     "sign": ["regulatory--*", "warning--*", "information--*"],
     "lighting": ["object--street-light"],
@@ -86,14 +97,18 @@ def get(session, path, **params):
 
 
 def safe(fn, tries=4):
-    """Retry fn(x) with backoff; give up (log 'skip:') only after all tries."""
-    def w(x):
+    """Retry fn(*args, **kwargs) with exponential backoff.
+
+    Accepts arbitrary args/kwargs so it can wrap any callable signature.
+    Returns None and logs 'skip:' only after all tries are exhausted.
+    """
+    def w(*args, **kwargs):
         for t in range(tries):
             try:
-                return fn(x)
+                return fn(*args, **kwargs)
             except Exception as e:
                 if t == tries - 1:
-                    print(f"\nskip: {repr(x)[:80]} {e!r}", file=sys.stderr)
+                    print(f"\nskip: {repr(args)[:80]} {e!r}", file=sys.stderr)
                     return None
                 time.sleep(2 ** t)
     return w
@@ -142,7 +157,14 @@ def fetch_images(session, ids):
 
 def decode_polygon(b64):
     """Detection geometry -> polygon in image coords normalized to 0..1 (origin top-left)."""
-    tile = mapbox_vector_tile.decode(base64.b64decode(b64), y_coord_down=True)
+    data = base64.b64decode(b64)
+    try:
+        tile = mapbox_vector_tile.decode(
+            data, default_options={"y_coord_down": True}
+        )
+    except TypeError:
+        # Older mapbox_vector_tile versions use keyword args directly.
+        tile = mapbox_vector_tile.decode(data, y_coord_down=True)
     layer = next(iter(tile.values()))
     ring = layer["features"][0]["geometry"]["coordinates"][0]
     return [[x / layer["extent"], y / layer["extent"]] for x, y in ring]
@@ -174,7 +196,125 @@ def fetch_detections(session, features, workers):
         return [r for rows in rows_list if rows for r in rows]
 
 
-def download(img):
+# ---------------------------------------------------------------------------
+# Image download + EXIF injection
+# ---------------------------------------------------------------------------
+
+def _to_deg_rational(value):
+    """Decimal degrees -> ((d,1),(m,1),(s,10000)) for piexif GPS IFD."""
+    d = int(value)
+    m = int((value - d) * 60)
+    s = round((value - d - m / 60) * 3600 * 10000)
+    return ((d, 1), (m, 1), (s, 10000))
+
+
+def _build_gps_ifd(img_meta):
+    """Build a piexif GPS IFD from Mapillary API metadata, or None if unusable."""
+    geom = img_meta.get("computed_geometry") or img_meta.get("geometry")
+    if not geom or geom.get("type") != "Point":
+        return None
+    lon, lat = geom["coordinates"]  # GeoJSON order: [lon, lat]
+
+    gps_ifd = {
+        piexif.GPSIFD.GPSVersionID: (2, 3, 0, 0),
+        piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S",
+        piexif.GPSIFD.GPSLatitude: _to_deg_rational(abs(lat)),
+        piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
+        piexif.GPSIFD.GPSLongitude: _to_deg_rational(abs(lon)),
+    }
+
+    direction = (
+        img_meta.get("computed_compass_angle")
+        if img_meta.get("computed_compass_angle") is not None
+        else img_meta.get("compass_angle")
+    )
+    if direction is not None:
+        gps_ifd[piexif.GPSIFD.GPSImgDirectionRef] = b"T"
+        gps_ifd[piexif.GPSIFD.GPSImgDirection] = (int(round(direction * 100)), 100)
+
+    return gps_ifd
+
+
+def _inject_piexif(path, gps_ifd):
+    """Try to inject GPS via piexif using an explicit BytesIO output buffer.
+
+    Returns the new JPEG bytes on verified success, or None if piexif
+    refused to modify the file or verification failed.
+    """
+    data = path.read_bytes()
+    try:
+        exif_dict = piexif.load(data)          # read existing EXIF if present
+    except Exception:
+        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+    exif_dict["GPS"] = gps_ifd
+    exif_bytes = piexif.dump(exif_dict)
+
+    try:
+        out = io.BytesIO()
+        piexif.insert(exif_bytes, data, out)   # explicit output buffer
+        new_data = out.getvalue()
+    except Exception as e:
+        print(f"\npiexif.insert failed for {path.name}: {e!r}", file=sys.stderr)
+        return None
+
+    if not new_data or new_data == data:
+        print(f"\npiexif no-op for {path.name}", file=sys.stderr)
+        return None
+
+    # Verify: GPS must be readable back from the new bytes.
+    try:
+        check = piexif.load(new_data)
+        if piexif.GPSIFD.GPSLatitude not in check.get("GPS", {}):
+            print(f"\npiexif verify failed for {path.name}", file=sys.stderr)
+            return None
+    except Exception as e:
+        print(f"\npiexif verify error for {path.name}: {e!r}", file=sys.stderr)
+        return None
+
+    return new_data
+
+
+def _inject_exiftool(path, gps_ifd):
+    """Fallback: write GPS via exiftool. Returns True on success."""
+    def deg(v):
+        return v[0][0] + v[1][0] / 60 + v[2][0] / v[2][1] / 3600
+
+    lat_ref = gps_ifd[piexif.GPSIFD.GPSLatitudeRef]
+    lon_ref = gps_ifd[piexif.GPSIFD.GPSLongitudeRef]
+    if isinstance(lat_ref, bytes):
+        lat_ref = lat_ref.decode()
+    if isinstance(lon_ref, bytes):
+        lon_ref = lon_ref.decode()
+    lat = deg(gps_ifd[piexif.GPSIFD.GPSLatitude])
+    lon = deg(gps_ifd[piexif.GPSIFD.GPSLongitude])
+
+    args = [
+        "exiftool", "-overwrite_original", "-q",
+        f"-GPSLatitude={lat:.9f}", f"-GPSLatitudeRef={lat_ref}",
+        f"-GPSLongitude={lon:.9f}", f"-GPSLongitudeRef={lon_ref}",
+    ]
+    if piexif.GPSIFD.GPSImgDirection in gps_ifd:
+        num, den = gps_ifd[piexif.GPSIFD.GPSImgDirection]
+        args.append(f"-GPSImgDirection={num / den:.4f}")
+        args.append("-GPSImgDirectionRef=T")
+    args.append(str(path))
+
+    try:
+        subprocess.run(args, check=True, capture_output=True, timeout=30)
+        return True
+    except FileNotFoundError:
+        print(f"\nexiftool not found (fallback unavailable for {path.name})",
+              file=sys.stderr)
+        return False
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        err = getattr(e, "stderr", b"") or b""
+        print(f"\nexiftool inject failed for {path.name}: {err[:300]!r}",
+              file=sys.stderr)
+        return False
+
+
+def download_one(img):
+    """Download a single thumbnail if missing. Atomic via .part + rename."""
     path = OUT / "images" / f"{img['id']}.jpg"
     url = img.get("thumb_1024_url")
     if path.exists() or not url:
@@ -186,6 +326,40 @@ def download(img):
     tmp.replace(path)
 
 
+def inject_one(img):
+    """Inject GPS + compass direction into a JPEG. Atomic, verified, with fallback."""
+    path = OUT / "images" / f"{img['id']}.jpg"
+    if not path.exists():
+        return False
+
+    gps_ifd = _build_gps_ifd(img)
+    if gps_ifd is None:
+        print(f"\nEXIF skip (no geometry): {path.name}", file=sys.stderr)
+        return False
+
+    # 1) piexif with explicit BytesIO output + verification
+    new_data = _inject_piexif(path, gps_ifd)
+    if new_data is not None:
+        tmp = path.with_suffix(".jpg.part")
+        try:
+            tmp.write_bytes(new_data)
+            tmp.replace(path)
+            return True
+        except Exception as e:
+            print(f"\nEXIF write failed for {path.name}: {e!r}", file=sys.stderr)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    # 2) fallback: exiftool
+    return _inject_exiftool(path, gps_ifd)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--region", choices=REGIONS, default="pilot")
@@ -193,12 +367,21 @@ def main():
     ap.add_argument("--probe", action="store_true",
                     help="count ALL map feature classes in region, write nothing")
     ap.add_argument("--images", action="store_true", help="also download 1024px JPEGs")
+    ap.add_argument("--exif", action="store_true",
+                    help="inject GPS + compass direction into JPEGs "
+                         "(implies --images; re-runs patch existing files)")
     ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args()
 
+    if args.exif:
+        args.images = True
+
     load_dotenv(ROOT / ".env")
+    token = os.environ.get("MAPILLARY_ACCESS_TOKEN")
+    if not token:
+        sys.exit("MAPILLARY_ACCESS_TOKEN not set (add it to .env at project root)")
     session = requests.Session()
-    session.headers["Authorization"] = f"OAuth {os.environ['MAPILLARY_ACCESS_TOKEN']}"
+    session.headers["Authorization"] = f"OAuth {token}"
 
     bbox = args.bbox or REGIONS[args.region]
     values = None if args.probe else [p for ps in VALUES.values() for p in ps]
@@ -213,7 +396,7 @@ def main():
     else:
         fetch_cell = safe(lambda b: fetch(session, b, values, fields))
         feats, todo = {}, grid
-        for attempt in range(2):          # 2nd pass retries failed cells
+        for attempt in range(2):
             failed = []
             with ThreadPoolExecutor(args.workers) as ex:
                 for i, (b, chunk) in enumerate(zip(todo, ex.map(fetch_cell, todo)), 1):
@@ -228,7 +411,8 @@ def main():
                 break
         print(file=sys.stderr)
         if todo:
-            print(f"WARNING: {len(todo)} cells failed twice, cache has holes: {todo}", file=sys.stderr)
+            print(f"WARNING: {len(todo)} cells failed twice, cache has holes: {todo}",
+                  file=sys.stderr)
         if not args.probe:
             cache.write_text(json.dumps(feats))
 
@@ -275,18 +459,42 @@ def main():
             fh.write(json.dumps(img) + "\n")
     print(f"{len(images)} images (metadata)")
 
-    if args.images:
-        (OUT / "images").mkdir(exist_ok=True)
-        have = lambda i: (OUT / "images" / f"{i['id']}.jpg").exists()
-        todo = [i for i in images if i.get("thumb_1024_url")]
-        for attempt in range(3):
-            with ThreadPoolExecutor(args.workers) as ex:
-                list(ex.map(safe(download), todo))   # download skips existing files
-            todo = [i for i in todo if not have(i)]
-            if not todo:
-                break
-            time.sleep(30)
-        print(f"images missing after retries: {len(todo)}")
+    if not args.images:
+        return
+
+    # Cap the image phase for testing; metadata files above are unaffected.
+    if MAX_IMAGES:
+        images = images[:MAX_IMAGES]
+        print(f"capped image phase at MAX_IMAGES={MAX_IMAGES}", file=sys.stderr)
+
+    (OUT / "images").mkdir(exist_ok=True)
+    todo = [i for i in images if i.get("thumb_1024_url")]
+
+    # --- 1. Download (network) — retried, isolated from EXIF ---
+    downloader = safe(download_one)
+    for attempt in range(3):
+        with ThreadPoolExecutor(args.workers) as ex:
+            list(ex.map(downloader, todo))
+        todo = [i for i in todo
+                if not (OUT / "images" / f"{i['id']}.jpg").exists()]
+        if not todo:
+            break
+        time.sleep(30)
+    if todo:
+        print(f"images missing after retries: {len(todo)}", file=sys.stderr)
+
+    # --- 2. EXIF injection (local) — no retries, best-effort, atomic ---
+    if args.exif:
+        targets = [i for i in images
+                   if (OUT / "images" / f"{i['id']}.jpg").exists()]
+        ok = fail = 0
+        with ThreadPoolExecutor(args.workers) as ex:
+            for result in ex.map(inject_one, targets):
+                if result:
+                    ok += 1
+                else:
+                    fail += 1
+        print(f"EXIF written to {ok} images ({fail} skipped/failed)")
 
 
 if __name__ == "__main__":
