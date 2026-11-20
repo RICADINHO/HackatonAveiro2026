@@ -95,6 +95,8 @@ Notes:
 
 Prerequisites: Nix (recommended) or Node ≥ 22, Python 3.12, uv, PostgreSQL with PostGIS.
 
+On Windows or Docker, follow [`server/README.md`](server/README.md) for PostgreSQL/PostGIS and run the commands with the venv or container Python; §11 lists the cross-platform pitfalls.
+
 ```sh
 # Enter the dev shell (direnv may do this automatically)
 nix develop
@@ -179,7 +181,8 @@ uv run --python .venv python -m unittest discover -s server/tests -v
 
 - `npm run build` runs `tsc -b` first. Type errors fail the build.
 - `server/tests/test_workflows.py` has pure unit tests that always run, plus `InventoryWorkflow`, which is skipped unless `AVEIRO_TEST_DATABASE_URL` is set. That suite creates and drops a scratch database, so point it at a disposable Postgres/PostGIS instance, never at the real `aveiro` DB.
-- **Test import currently needs `httpx2`.** `fastapi.testclient` imports `starlette.testclient`, which raises unless `httpx2` is installed. It is not in `requirements.txt` in this checkout, so `unittest discover` fails at import with `RuntimeError: The starlette.testclient module requires the httpx2 package`. Install it first: `uv pip install --python .venv httpx2` (and consider adding it to `requirements.txt`).
+- **Test import may need `httpx2`.** `fastapi.testclient` imports `starlette.testclient`, which can raise `RuntimeError: The starlette.testclient module requires the httpx2 package`. A deprecation warning about `httpx` is not a failure. Run the suite first; only if it actually fails at import, install `httpx2` (`uv pip install --python .venv httpx2`) and consider adding it to `requirements.txt`.
+- If `uv` is not on the agent shell's `PATH`, run the same module with the venv interpreter from the repository root: `.venv/bin/python -m server.app` / `.venv/bin/python -m unittest ...` (Linux/macOS) or `.venv\Scripts\python.exe -m ...` (Windows PowerShell). Do not hand-craft `LD_LIBRARY_PATH` or `PATH` library paths; see §11.
 - After changing frontend code, rebuild before testing against `:8000`; that server only serves `web/dist`.
 
 ### Data directory
@@ -292,6 +295,7 @@ Single-page app. No router: `App.tsx` owns view state and opens dialogs/drawers.
 - Config comes from `web/src/config.ts` via `../../src/config.ts`; do not read `import.meta.env` directly elsewhere.
 - Category/class/label mapping lives in `constants.ts`. Add sign classes to `SIGN_LABELS`, bin classes to `WASTE_LABELS`, and a marker icon to `CLASS_ICONS`; `CLASS_CATEGORY` and `CLASS_LABELS` are derived from those lists. Keep the backend `Category` literal (`sinalizacao`, `iluminacao`, `residuos`) in sync.
 - Styling is plain CSS with custom properties in `index.css` (`--cat-sign`, `--cat-light`, `--cat-bin`, theme tokens). Bootstrap CSS is **not** imported; only `bootstrap-icons` is. Do not reintroduce Bootstrap/AOS/GLightbox/Swiper.
+- An unknown `bi-*` class renders nothing. Check `web/dot/node_modules/bootstrap-icons/font/bootstrap-icons.css` (or `rg`) before adding a new icon.
 - Keep the Portuguese copy and the existing visual language (rounded cards, glass surfaces, category colours).
 - Lint is `oxlint`. `set-state-in-effect` and `only-export-components` warnings are expected in a few places; don't add new errors.
 
@@ -303,10 +307,12 @@ Before handing work back:
 
 1. `cd web/dot && npm run build` — must pass (runs `tsc -b`).
 2. `cd web/dot && npm run lint` — no errors.
-3. `uv run --python .venv python -m unittest discover -s server/tests -v` — unit tests pass. If it fails at import, install `httpx2` first (see §4).
+3. `uv run --python .venv python -m unittest discover -s server/tests -v` — unit tests pass. If `uv` is unavailable, use the venv interpreter (§4, §11). Install `httpx2` only if the run actually fails at import.
 4. For API changes, run the server and exercise the endpoint (curl or the app). Authenticated routes need a real Supabase token.
 5. For map/env changes, rebuild and confirm the served `web/dist` bundle contains the expected tile URL/key.
 6. Check that no secret (Supabase **secret** key, Mapillary token) is staged for commit. The Supabase publishable key and CARTO key are public by design.
+
+Run the commands inside the project environment (dev shell, venv, or container) rather than patching `LD_LIBRARY_PATH`/`PATH` by hand; see §11.
 
 There is no end-to-end browser test suite. If browser automation is unavailable, verify with the build, lint, unit tests, and `curl` against `:8000`.
 
@@ -365,3 +371,43 @@ There is no end-to-end browser test suite. If browser automation is unavailable,
 - **No browser E2E tests.** Visual verification is manual or via the build.
 - **Current local data**: a handful of items/images/detections in the dev DB; treat it as disposable.
 - **Deployment leftovers**: `server/Caddyfile`, `server/skyloft.nix`, `gh-pages`, and the GitHub Pages CORS origin remain but are not part of the local workflow.
+
+---
+
+## 11. Agent environment notes (Linux, Windows, Docker)
+
+These are the traps that cost the most tokens. They are about the machine, not the app.
+
+**Use the project environment before debugging imports.**
+
+- Canonical commands are in §4. On NixOS, run them inside `nix develop` (or `direnv exec .`). The flake's `shellHook` sets `LD_LIBRARY_PATH`, `LIBRARY_PATH` and `TMPDIR`; do not hand-pick `/nix/store/...` paths or copy them between machines.
+- If `uv`/`nix` are unavailable in a non-interactive agent shell, use the venv interpreter from the repository root: `.venv/bin/python` (Linux/macOS) or `.venv\Scripts\python.exe` (Windows PowerShell). Do not install Nix, uv, Python, PostgreSQL or Node system-wide just to run a check; use what the environment already provides or ask the user.
+- In Docker, run backend commands inside the container (`docker exec …` / `docker compose exec …`) with the container's Python. Do not point a host `.venv` at a container database, and do not assume host paths exist inside it.
+
+**Native import errors are usually a stale or mismatched venv.**
+
+- `libz.so.1`, `libstdc++.so.6`, `DLL load failed`, or an `aarch64`/`x86_64` mismatch means the `.venv` came from another machine/architecture (common with OneDrive) or the dev shell is not active.
+- Recreate it for the current platform (`uv venv .venv --python 3.12`, then `uv pip install --python .venv --torch-backend cpu -r requirements.txt`) or run inside the dev shell/container. Do not mix architectures or patch the loader by hand.
+
+**Do not assume host CLI tools.**
+
+- `find`, `grep`, `sed`, `psql`, `pg_ctl` and `ldd` may be missing outside the dev shell. Use the agent's file/search tools, `rg`, or Python instead.
+- On Windows, use `npm.cmd` if PowerShell blocks `npm.ps1`.
+- For a database check without `psql`, use the venv Python with `DATABASE_URL` from `.env` (psycopg is already installed).
+
+**Check for a server before starting one.**
+
+- Probe first: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/` (or open the URL; on Windows use `curl.exe` or `Invoke-WebRequest`). If it answers, do not kill it; it may be the user's process.
+- `web/dist` is read from disk, so frontend rebuilds appear immediately. Backend changes need a restart; ask the user to restart rather than terminating their process.
+
+**Model locations and the data directory.**
+
+- The detector/classifier weights and the YOLOE prompt embeddings are committed in the repo under `yolo/`.
+- The two anonymization ONNX weights (and the optional `yoloe-26s-seg.pt`) live in `<data-dir>/models`.
+- `<data-dir>` defaults to `~/aveiro-data`, but the running server may pass `--data-dir ./aveiro-data` (or a container path). Check the start command/container config before concluding a model is missing.
+- `imgs/`, `Datasets/` and `aveiro-data/` are local, gitignored data. Do not make tests, docs or verification steps depend on them.
+
+**Verify the existing cascade before adding one.**
+
+- `prepare_frame` already calls `detect()` then `classify_detections()`. Check `CLASSIFIERS`, `SIGN_SUBTYPES`, `WASTE_SUBTYPES` and `git log` before writing a new pipeline.
+- `server/tests` covers the cascade with mocks. A real-image smoke test is optional; if you run one, use a local street photo with `detect()` + `classify_detections()` rather than exercising the whole upload flow.
