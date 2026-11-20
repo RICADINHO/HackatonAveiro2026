@@ -31,6 +31,8 @@ The UI is in Portuguese (`pt-PT`). Keep user-facing strings in Portuguese.
 
 The FastAPI process serves the built SPA, the API, and the images from one origin.
 
+The production frontend is installable as a PWA: `web/dot/public/manifest.webmanifest` and `icons/` provide the install metadata and icons, and `sw.js` provides a network-only service worker with an offline navigation message. Installation requires HTTPS or localhost and depends on browser support; iOS uses Share → Add to Home Screen. Inventory, images, authentication and uploads are not cached for offline use.
+
 ---
 
 ## 2. Repository layout

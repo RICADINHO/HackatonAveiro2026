@@ -7,6 +7,7 @@ const apiBase = typeof env.VITE_API_BASE_URL === 'string'
   : '/api'
 
 export const config = {
+  isProduction: env.PROD,
   apiBase,
   supabaseUrl: env.VITE_SUPABASE_URL || 'https://vvokqdzayayfzktkabqa.supabase.co',
   supabasePublishableKey: env.VITE_SUPABASE_PUBLISHABLE_KEY || env.VITE_SUPABASE_ANON_KEY
