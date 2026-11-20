@@ -20,6 +20,8 @@
 - `npm run build` compila o frontend para `web/dist`.
 - `npm run dev` inicia o Vite com proxy para a API local.
 
+To run it on your phone with tailscale fo to `tailscale serve 8000` and open in the phone the .ts.net url, for example `https://skyloft.tailb6874b.ts.net/`
+
 ## Variáveis do frontend
 
 As variáveis do Vite ficam em [`web/.env`](web/.env) e o modelo está em [`web/.env.example`](web/.env.example). Não são lidas do `.env` da raiz.
